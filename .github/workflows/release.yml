@@ -55,7 +55,7 @@ jobs:
         working-directory: packages/app
 
       - name: CLI 测试
-        run: npm run test -w @hajimi/cli
+        run: npm run test -w hajimi-pet-cli
 
       - name: 生成注册表与校验和
         run: node scripts/make-manifest.mjs

@@ -30,7 +30,7 @@ jobs:
         run: npm run build -w @hajimi/app
 
       - name: CLI 端到端测试
-        run: npm run test -w @hajimi/cli
+        run: npm run test -w hajimi-pet-cli
 
       - name: 应用自检（真实启动 + 截图）
         run: npm run selftest -w @hajimi/app
