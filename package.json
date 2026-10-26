@@ -10,11 +10,11 @@
   "scripts": {
     "dev": "npm run dev -w @hajimi/app",
     "build": "npm run build -w @hajimi/app",
-    "typecheck": "npm run typecheck -w @hajimi/app && npm run typecheck -w @hajimi/cli",
+    "typecheck": "npm run typecheck -w @hajimi/app && npm run typecheck -w hajimi-pet-cli",
     "selftest": "npm run selftest -w @hajimi/app",
     "dist:win": "npm run dist:win -w @hajimi/app",
-    "cli:build": "npm run build -w @hajimi/cli",
-    "cli:test": "npm run test -w @hajimi/cli",
+    "cli:build": "npm run build -w hajimi-pet-cli",
+    "cli:test": "npm run test -w hajimi-pet-cli",
     "manifest": "node scripts/make-manifest.mjs",
     "verify:release": "node scripts/verify-release.mjs",
     "verify:shortcut": "node scripts/check-shortcut.cjs"
