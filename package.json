@@ -1,23 +1,18 @@
 {
-  "name": "hajimi-pet",
-  "version": "1.0.0",
+  "name": "hajimi-dsh-pet",
+  "version": "1.1.0",
   "private": true,
-  "description": "哈基米桌宠：Windows 透明桌面宠物 + 命令行安装器",
+  "description": "哈基米桌宠 · DeepSeek Harness 专用",
   "workspaces": [
-    "packages/app",
-    "packages/cli"
+    "packages/app"
   ],
   "scripts": {
     "dev": "npm run dev -w @hajimi/app",
     "build": "npm run build -w @hajimi/app",
-    "typecheck": "npm run typecheck -w @hajimi/app && npm run typecheck -w hajimi-pet-cli",
+    "typecheck": "npm run typecheck -w @hajimi/app",
     "selftest": "npm run selftest -w @hajimi/app",
     "dist:win": "npm run dist:win -w @hajimi/app",
-    "cli:build": "npm run build -w hajimi-pet-cli",
-    "cli:test": "npm run test -w hajimi-pet-cli",
-    "manifest": "node scripts/make-manifest.mjs",
-    "verify:release": "node scripts/verify-release.mjs",
-    "verify:shortcut": "node scripts/check-shortcut.cjs"
+    "assets": "python tools/assets/build_assets.py"
   },
   "engines": {
     "node": ">=20"

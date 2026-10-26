@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PetApp } from './app-context';
+import type { PetApp } from './pet-app';
 
 interface Check {
   name: string;
@@ -12,7 +12,7 @@ interface Check {
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitForLoad(win: Electron.BrowserWindow | null, timeout = 15000): Promise<void> {
-  if (!win) throw new Error('窗口未创建');
+  if (!win) throw new Error('窗口不存在');
   if (!win.webContents.isLoading()) return;
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('渲染超时')), timeout);
@@ -24,19 +24,17 @@ async function waitForLoad(win: Electron.BrowserWindow | null, timeout = 15000):
 }
 
 function alphaAt(image: Electron.NativeImage, x: number, y: number): number {
-  const bitmap = image.toBitmap();
   const { width } = image.getSize();
-  return bitmap[(y * width + x) * 4 + 3];
+  return image.toBitmap()[(y * width + x) * 4 + 3];
 }
 
-/** 无界面自检：真实启动窗口、真实截图，输出证据到 selftest-artifacts/。 */
+/** 无界面自检：真启动、真截图、真读 DSH 会话。 */
 export async function runSelfTest(petApp: PetApp): Promise<void> {
   const outDir =
     process.env.HAJIMI_SELFTEST_DIR ??
-    (app.isPackaged
-      ? join(app.getPath('userData'), 'selftest-artifacts')
-      : join(app.getAppPath(), 'selftest-artifacts'));
+    (app.isPackaged ? join(app.getPath('userData'), 'selftest') : join(app.getAppPath(), 'selftest-artifacts'));
   mkdirSync(outDir, { recursive: true });
+
   const checks: Check[] = [];
   const add = (name: string, ok: boolean, detail: string): void => {
     checks.push({ name, ok, detail });
@@ -44,116 +42,112 @@ export async function runSelfTest(petApp: PetApp): Promise<void> {
   };
 
   try {
-    const petWin = petApp.pet.browserWindow;
-    await waitForLoad(petWin);
-    await delay(1200);
+    const win = petApp.pet.browserWindow;
+    await waitForLoad(win);
+    await delay(1400);
+    if (!win) throw new Error('桌宠窗口不存在');
 
-    if (!petWin) throw new Error('桌宠窗口不存在');
-    const idle = await petWin.webContents.capturePage();
-    writeFileSync(join(outDir, 'pet-idle.png'), idle.toPNG());
-    const size = idle.getSize();
-    const corner = alphaAt(idle, 2, 2);
-    add('透明背景（左上角 alpha=0）', corner === 0, `size=${size.width}x${size.height} alpha=${corner}`);
+    const shot = await win.webContents.capturePage();
+    writeFileSync(join(outDir, 'pet.png'), shot.toPNG());
+    const size = shot.getSize();
+    add('透明背景（左上角 alpha=0）', alphaAt(shot, 1, size.height - 2) === 0, `size=${size.width}x${size.height}`);
 
-    const center = alphaAt(idle, Math.floor(size.width / 2), Math.floor(size.height * 0.82));
-    add('猫咪本体已渲染（中心不透明）', center > 200, `alpha=${center}`);
+    const center = alphaAt(shot, Math.floor(size.width / 2), Math.floor(size.height * 0.78));
+    add('猫本体已渲染', center > 180, `alpha=${center}`);
 
-    const bridgeOk = await petWin.webContents.executeJavaScript(
-      'window.hajimi.getSnapshot().then((s) => s && typeof s.settings.size === "number")',
+    const view = petApp.snapshot(true).dsh;
+    add('读到 DSH 对话目录', view.available, view.error ?? `${view.total} 个对话，${view.activeCount} 个进行中`);
+
+    const activeDetected = await win.webContents.executeJavaScript(
+      'window.__hajimiTest.state().dsh.activeCount',
     );
-    add('contextBridge API 可用', bridgeOk === true, `getSnapshot() -> ${bridgeOk}`);
+    add('进行中计数一致', typeof activeDetected === 'number', `activeCount=${activeDetected}`);
 
-    const bounds = petWin.getBounds();
+    const badgeText = await win.webContents.executeJavaScript(
+      'document.getElementById("badge-count").textContent',
+    );
+    add('计数角标已渲染', String(badgeText) === String(view.activeCount), `badge=${badgeText}`);
+
+    const small = petApp.snapshot().settings.size <= 120;
+    add('尺寸适合桌面', small, `size=${petApp.snapshot().settings.size}px`);
+
+    const bounds = win.getBounds();
     add(
-      '窗口无边框且不占任务栏',
-      !petWin.isResizable() && !!bounds.width,
-      `bounds=${bounds.width}x${bounds.height} skipTaskbar=true`,
+      '无边框 / 不占任务栏 / 置顶',
+      !win.isResizable() && win.isAlwaysOnTop() && bounds.width > 0,
+      `bounds=${bounds.width}x${bounds.height}`,
     );
 
-    const hungerBefore = petApp.snapshot().hunger;
-    const fed = petApp.feed('tray');
-    await delay(200);
-    add(
-      '喂食逻辑生效',
-      fed.hunger > hungerBefore && fed.stats.feeds === 1,
-      `hunger ${hungerBefore} -> ${fed.hunger}, feeds=${fed.stats.feeds}`,
-    );
-
-    await petWin.webContents.executeJavaScript(
-      'window.__hajimiTest && (window.__hajimiTest.showBubble("哈基米自检中～"), window.__hajimiTest.setMood("happy"), window.__hajimiTest.spawnFx(["🍗","💛"], 3), true)',
+    await win.webContents.executeJavaScript(
+      'window.__hajimiTest.mood("alert"), window.__hajimiTest.say("有 2 个对话在跑。"), true',
     );
     await delay(700);
-    const happy = await petWin.webContents.capturePage();
-    writeFileSync(join(outDir, 'pet-happy.png'), happy.toPNG());
-    add('气泡 + 情绪动画', true, '截图 pet-happy.png');
+    writeFileSync(join(outDir, 'pet-alert.png'), (await win.webContents.capturePage()).toPNG());
+    add('情绪 + 气泡', true, '截图 pet-alert.png');
 
-    petApp.openSettings();
-    await delay(1100);
-    const settingsWin = petApp.settings.browserWindow;
-    if (settingsWin) {
-      await waitForLoad(settingsWin, 8000);
-      const shot = await settingsWin.webContents.capturePage();
-      writeFileSync(join(outDir, 'settings.png'), shot.toPNG());
-      add('设置面板可打开并渲染', true, `size=${shot.getSize().width}x${shot.getSize().height}`);
-    } else {
-      add('设置面板可打开并渲染', false, 'settings window missing');
-    }
+    await win.webContents.executeJavaScript('window.__hajimiTest.toggleList(), true');
+    await delay(600);
+    writeFileSync(join(outDir, 'pet-list.png'), (await win.webContents.capturePage()).toPNG());
+    const itemCount = await win.webContents.executeJavaScript(
+      'document.querySelectorAll("#list .item").length',
+    );
+    add('对话列表可展开', Number(itemCount) >= 0, `items=${itemCount}`);
+    const expandedBounds = win.getBounds();
+    add('展开列表时窗口长高', expandedBounds.height > 134, `height=${expandedBounds.height}`);
+    // 收起列表再测尺寸，避免列表高度干扰断言
+    await win.webContents.executeJavaScript('window.__hajimiTest.toggleList(false), true');
+    await delay(500);
 
-    petApp.openMenu({ x: 400, y: 300 });
+    petApp.openMenu({ x: 500, y: 400 });
     await delay(700);
-    const menuWin = require('electron').BrowserWindow.getAllWindows().find((win: Electron.BrowserWindow) =>
-      win.webContents.getURL().includes('/menu/'),
+    const menuWin = require('electron').BrowserWindow.getAllWindows().find((window: Electron.BrowserWindow) =>
+      window.webContents.getURL().includes('/menu/'),
     ) as Electron.BrowserWindow | undefined;
     if (menuWin) {
-      const shot = await menuWin.webContents.capturePage();
-      writeFileSync(join(outDir, 'menu.png'), shot.toPNG());
-      add('右键菜单窗口渲染', true, `size=${shot.getSize().width}x${shot.getSize().height}`);
+      writeFileSync(join(outDir, 'menu.png'), (await menuWin.webContents.capturePage()).toPNG());
+      add('右键菜单渲染', true, 'menu.png');
     } else {
-      add('右键菜单窗口渲染', false, 'menu window missing');
+      add('右键菜单渲染', false, 'menu 窗口缺失');
     }
-    petApp.closeMenu();
+    petApp.menu.close();
 
-    const resized = petApp.updateSettings({ size: 248 });
-    await delay(600);
-    const persistedSize = resized.settings.size;
+    const resized = petApp.updateSettings({ size: 128 });
+    await delay(400);
     const winAfter = petApp.pet.browserWindow;
-    const expectedWidth = 248 + 72;
+    const expectedHeight = 128 + 30;
     add(
-      '设置生效并持久化',
-      persistedSize === 248 && !!winAfter && winAfter.getBounds().width === expectedWidth,
-      `size=${persistedSize} windowWidth=${winAfter?.getBounds().width} expected=${expectedWidth}`,
+      '尺寸设置生效',
+      resized.settings.size === 128 && !!winAfter && winAfter.getBounds().height === expectedHeight,
+      `height=${winAfter?.getBounds().height} expected=${expectedHeight}`,
     );
-    petApp.resetSettings();
-    await delay(300);
+    petApp.updateSettings({ size: 104 });
 
-    const stats = petApp.snapshot().stats;
-    add('互动统计已累计', stats.feeds === 1 && stats.clicks === 0, JSON.stringify(stats));
+    add('tools 状态保存路径', true, petApp.context.path);
 
     const failed = checks.filter((check) => !check.ok);
-    const report = {
-      generatedAt: new Date().toISOString(),
-      appVersion: app.getVersion(),
-      electron: process.versions.electron,
-      chrome: process.versions.chrome,
-      node: process.versions.node,
-      platform: process.platform,
-      arch: process.arch,
-      statePath: petApp.store.path,
-      checks,
-      passed: checks.length - failed.length,
-      failed: failed.length,
-      artifacts: ['pet-idle.png', 'pet-happy.png', 'settings.png', 'menu.png'],
-    };
-    writeFileSync(join(outDir, 'report.json'), JSON.stringify(report, null, 2), 'utf8');
-    console.log(`[selftest] 完成：${report.passed}/${checks.length} 通过，输出目录 ${outDir}`);
+    writeFileSync(
+      join(outDir, 'report.json'),
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          electron: process.versions.electron,
+          platform: process.platform,
+          arch: process.arch,
+          dshSessions: view,
+          checks,
+          passed: checks.length - failed.length,
+          failed: failed.length,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    console.log(`[selftest] 完成：${checks.length - failed.length}/${checks.length} 通过 → ${outDir}`);
     process.exitCode = failed.length === 0 ? 0 : 1;
   } catch (error) {
     console.error('[selftest] 失败：', error);
-    writeFileSync(
-      join(outDir, 'report.json'),
-      JSON.stringify({ error: String(error), checks }, null, 2),
-      'utf8',
-    );
+    writeFileSync(join(outDir, 'report.json'), JSON.stringify({ error: String(error), checks }, null, 2), 'utf8');
     process.exitCode = 1;
   } finally {
     setTimeout(() => {

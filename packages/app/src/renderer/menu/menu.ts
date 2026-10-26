@@ -1,7 +1,8 @@
-import type { MenuAction } from '../../shared/types';
+import type { MenuAction, PetSnapshot } from '../../shared/types';
 
 const api = window.hajimi;
 const items = Array.from(document.querySelectorAll<HTMLButtonElement>('.item'));
+const animLabel = document.getElementById('anim-label') as HTMLSpanElement;
 
 function activate(button: HTMLButtonElement): void {
   const action = button.dataset.action as MenuAction | undefined;
@@ -12,6 +13,10 @@ function activate(button: HTMLButtonElement): void {
 for (const item of items) {
   item.addEventListener('click', () => activate(item));
 }
+
+api.onState((snapshot: PetSnapshot) => {
+  animLabel.textContent = snapshot.settings.animations ? '关闭动画' : '开启动画';
+});
 
 document.addEventListener('keydown', (event) => {
   const index = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -29,6 +34,10 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     activate(items[index]);
   }
+});
+
+void api.getSnapshot().then((snapshot) => {
+  animLabel.textContent = snapshot.settings.animations ? '关闭动画' : '开启动画';
 });
 
 window.addEventListener('contextmenu', (event) => event.preventDefault());

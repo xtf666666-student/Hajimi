@@ -1,7 +1,7 @@
-import { contextBridge, ipcRenderer } from 'electron';
+﻿import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/ipc';
 import type { HajimiApi } from '../shared/api';
-import type { MenuAction, PetGeometry, PetSnapshot, Point, Settings } from '../shared/types';
+import type { MenuAction, PetSnapshot } from '../shared/types';
 
 function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
   const handler = (_event: Electron.IpcRendererEvent, payload: T): void => listener(payload);
@@ -10,36 +10,28 @@ function subscribe<T>(channel: string, listener: (payload: T) => void): () => vo
 }
 
 const api: HajimiApi = {
-  getSnapshot: () => ipcRenderer.invoke(IPC.getSnapshot) as Promise<PetSnapshot>,
-  getAppInfo: () =>
-    ipcRenderer.invoke(IPC.getAppInfo) as Promise<{ version: string; platform: string; statePath: string }>,
+  getSnapshot: () => ipcRenderer.invoke(IPC.snapshot) as Promise<PetSnapshot>,
+  refresh: () => ipcRenderer.invoke(IPC.refresh) as Promise<PetSnapshot>,
+  click: () => ipcRenderer.invoke(IPC.click) as Promise<PetSnapshot>,
+  pet: () => ipcRenderer.invoke(IPC.pet) as Promise<PetSnapshot>,
 
-  reportGeometry: (geometry: PetGeometry) => ipcRenderer.send(IPC.reportGeometry, geometry),
+  openDsh: () => ipcRenderer.send(IPC.openDsh),
+  openSession: (sessionId: string) => ipcRenderer.send(IPC.openSession, sessionId),
+
   dragStart: () => ipcRenderer.send(IPC.dragStart),
   dragEnd: () => ipcRenderer.send(IPC.dragEnd),
+  reportGeometry: (geometry) => ipcRenderer.send(IPC.geometry, geometry),
+  setListOpen: (open: boolean) => ipcRenderer.send(IPC.listState, open),
 
-  registerClick: () => ipcRenderer.invoke(IPC.click) as Promise<PetSnapshot>,
-  petHead: () => ipcRenderer.invoke(IPC.pet) as Promise<PetSnapshot>,
-  feed: () => ipcRenderer.invoke(IPC.feed) as Promise<PetSnapshot>,
-
-  updateSettings: (patch: Partial<Settings>) =>
-    ipcRenderer.invoke(IPC.updateSettings, patch) as Promise<PetSnapshot>,
-  resetSettings: () => ipcRenderer.invoke(IPC.resetSettings) as Promise<PetSnapshot>,
-
-  showContextMenu: (point: Point) => ipcRenderer.send(IPC.contextMenu, point),
-  openSettings: () => ipcRenderer.send(IPC.openSettings),
-  closeSettings: () => ipcRenderer.send(IPC.closeSettings),
-  hidePet: () => ipcRenderer.send(IPC.hidePet),
-  quit: () => ipcRenderer.send(IPC.quit),
-
+  showMenu: (point) => ipcRenderer.send(IPC.menu, point),
   menuAction: (action: MenuAction) => ipcRenderer.send(IPC.menuAction, action),
   closeMenu: () => ipcRenderer.send(IPC.closeMenu),
+  quit: () => ipcRenderer.send(IPC.quit),
 
-  onState: (listener) => subscribe<PetSnapshot>(IPC.stateChanged, listener),
-  onSay: (listener) => subscribe<{ text: string }>(IPC.say, listener),
-  onCommand: (listener) =>
-    subscribe<{ type: string; [key: string]: unknown }>(IPC.command, listener),
+  onState: (listener) => subscribe<PetSnapshot>(IPC.state, listener),
   onDropped: (listener) => subscribe<void>(IPC.dropped, () => listener()),
+  onCommand: (listener) => subscribe<{ type: string; [key: string]: unknown }>(IPC.command, listener),
 };
 
 contextBridge.exposeInMainWorld('hajimi', api);
+

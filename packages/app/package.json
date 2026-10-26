@@ -1,8 +1,8 @@
 {
   "name": "@hajimi/app",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "哈基米桌宠桌面应用（Electron）",
+  "description": "哈基米桌宠 · DeepSeek Harness 专用",
   "main": "dist/main/main/index.js",
   "author": "xtf666666-student",
   "license": "MIT",
@@ -26,8 +26,8 @@
     "vite": "^6.0.11"
   },
   "build": {
-    "appId": "com.hajimi.desktoppet",
-    "productName": "HajimiDesktopPet",
+    "appId": "com.hajimi.dshpet",
+    "productName": "HajimiDshPet",
     "copyright": "Copyright © 2026 xtf666666-student",
     "directories": {
       "output": "release",
@@ -39,7 +39,9 @@
     "compression": "normal",
     "files": [
       "dist/**/*",
-      "assets/hajimi.png",
+      "assets/pet-body.png",
+      "assets/pet-head.png",
+      "assets/pet-shadow.png",
       "assets/tray.png",
       "assets/icon.png",
       "package.json"
@@ -71,14 +73,14 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "哈基米桌宠",
+      "shortcutName": "哈基米 · DSH",
       "installerLanguages": [
         "zh_CN"
       ],
-      "artifactName": "HajimiDesktopPet-Setup-${version}-${arch}.${ext}"
+      "artifactName": "HajimiDshPet-Setup-${version}-${arch}.${ext}"
     },
     "portable": {
-      "artifactName": "HajimiDesktopPet-Portable-${version}-${arch}.${ext}"
+      "artifactName": "HajimiDshPet-Portable-${version}-${arch}.${ext}"
     }
   }
 }

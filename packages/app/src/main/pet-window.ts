@@ -1,42 +1,39 @@
 import { BrowserWindow, screen } from 'electron';
 import { IPC } from '../shared/ipc';
-import type { PetGeometry, Point, Settings } from '../shared/types';
-import { clampPosition, defaultPosition, petSizeFromWindowWidth, petWindowSize, pointInEllipse, pointInRect } from './layout';
-import { PRELOAD_PATH, rendererUrl } from './paths';
+import type { PetSnapshot, Settings } from '../shared/types';
+import { clampPosition, defaultPosition, petWindowSize, pointInEllipse } from './layout';import { PRELOAD_PATH, rendererUrl } from './paths';
 
 /**
  * 桌宠窗口：无边框 + 真透明 + 置顶 + 不进任务栏。
- * 负责拖动（主进程按光标轮询移动，避免跟不上）、点击穿透（透明区域不挡桌面）。
+ * 拖动在主进程按光标轮询，透明区域自动穿透。
  */
 export class PetWindow {
   private win: BrowserWindow | null = null;
   private ignoreMouse = false;
   private dragging = false;
-  private dragOffset: Point = { x: 0, y: 0 };
+  private dragOffset = { x: 0, y: 0 };
   private dragTimer: NodeJS.Timeout | null = null;
   private hitTimer: NodeJS.Timeout | null = null;
-  private geometry: PetGeometry = {
-    cat: { x: 0, y: 0, width: 200, height: 200 },
-    bubble: null,
-  };
+  private cat = { x: 0, y: 0, width: 100, height: 100 };
+  private listExpanded = false;
 
-  constructor(private readonly onDrop: (position: Point) => void) {}
+  constructor(private readonly onDrop: (position: { x: number; y: number }) => void) {}
 
   get browserWindow(): BrowserWindow | null {
     return this.win;
   }
 
-  get isDragging(): boolean {
-    return this.dragging;
-  }
-
-  get isVisible(): boolean {
+  get visible(): boolean {
     return !!this.win && !this.win.isDestroyed() && this.win.isVisible();
   }
 
-  create(settings: Settings, savedPosition: Point | null): BrowserWindow {
+  get draggingNow(): boolean {
+    return this.dragging;
+  }
+
+  create(settings: Settings, saved: { x: number; y: number } | null): BrowserWindow {
     const { width, height } = petWindowSize(settings.size);
-    const target = savedPosition ? clampPosition(savedPosition, settings.size) : defaultPosition(settings.size);
+    const target = saved ? clampPosition(saved, settings.size) : defaultPosition(settings.size);
 
     const win = new BrowserWindow({
       width,
@@ -53,8 +50,8 @@ export class PetWindow {
       fullscreenable: false,
       skipTaskbar: true,
       show: false,
-      alwaysOnTop: settings.alwaysOnTop,
-      title: '哈基米桌宠',
+      alwaysOnTop: true,
+      title: '哈基米 · DSH',
       webPreferences: {
         preload: PRELOAD_PATH,
         contextIsolation: true,
@@ -65,19 +62,17 @@ export class PetWindow {
       },
     });
 
-    win.setAlwaysOnTop(settings.alwaysOnTop, 'floating');
-    win.setOpacity(settings.opacity);
+    win.setAlwaysOnTop(true, 'floating');
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     if (process.env.HAJIMI_DEVTOOLS === '1') win.webContents.openDevTools({ mode: 'detach' });
 
     win.once('ready-to-show', () => {
-      win.showInactive();
+      if (settings.visible) win.showInactive();
     });
-
     win.on('closed', () => {
       this.stopTimers();
       this.win = null;
     });
-
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
@@ -91,19 +86,15 @@ export class PetWindow {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     const bounds = win.getBounds();
-    const { width, height } = petWindowSize(settings.size);
+    const { width, height } = petWindowSize(settings.size, this.listExpanded);
     if (bounds.width !== width || bounds.height !== height) {
+      const bottom = bounds.y + bounds.height;
       const next = clampPosition(
-        {
-          x: bounds.x + (bounds.width - width) / 2,
-          y: bounds.y + (bounds.height - height),
-        },
+        { x: bounds.x + (bounds.width - width) / 2, y: bottom - height },
         settings.size,
       );
       win.setBounds({ x: next.x, y: next.y, width, height });
     }
-    win.setOpacity(settings.opacity);
-    win.setAlwaysOnTop(settings.alwaysOnTop, 'floating');
   }
 
   show(): void {
@@ -118,13 +109,25 @@ export class PetWindow {
     this.applyIgnore(false);
   }
 
-  setGeometry(geometry: PetGeometry): void {
-    this.geometry = geometry;
+  setCatRect(rect: { x: number; y: number; width: number; height: number }): void {
+    if (rect.width > 0 && rect.height > 0) this.cat = rect;
   }
 
-  /** 气泡出现 / 消失时刷新命中区域，让气泡上的点击也能落到桌宠窗口。 */
-  setBubbleVisible(visible: boolean): void {
-    if (!visible) this.geometry.bubble = null;
+  /** 展开/收起对话列表：向屏幕上方长高，底部锚点不动，避免挡住任务栏。 */
+  setListExpanded(expanded: boolean, size: number): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    const bounds = win.getBounds();
+    const next = petWindowSize(size, expanded);
+    if (bounds.width === next.width && bounds.height === next.height) return;
+    const bottom = bounds.y + bounds.height;
+    win.setBounds({
+      x: Math.round(bounds.x + (bounds.width - next.width) / 2),
+      y: Math.round(bottom - next.height),
+      width: next.width,
+      height: next.height,
+    });
+    this.listExpanded = expanded;
   }
 
   startDrag(): void {
@@ -154,13 +157,11 @@ export class PetWindow {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     const bounds = win.getBounds();
-    // 窗口宽度 = 猫宽 + 气泡留白，缩放时用窗口宽度反推猫本体尺寸
-    const size = petSizeFromWindowWidth(bounds.width);
+    const size = Math.max(72, bounds.height - 30);
     const clamped = clampPosition({ x: bounds.x, y: bounds.y }, size);
     win.setPosition(clamped.x, clamped.y, false);
     this.onDrop(clamped);
     win.webContents.send(IPC.dropped);
-    // 松手后立即重算一次穿透状态
     this.evaluateHit();
   }
 
@@ -168,6 +169,10 @@ export class PetWindow {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     win.webContents.send(channel, payload);
+  }
+
+  broadcast(snapshot: PetSnapshot): void {
+    this.send(IPC.state, snapshot);
   }
 
   destroy(): void {
@@ -178,7 +183,7 @@ export class PetWindow {
 
   private startHitTest(): void {
     if (this.hitTimer) return;
-    this.hitTimer = setInterval(() => this.evaluateHit(), 90);
+    this.hitTimer = setInterval(() => this.evaluateHit(), 80);
     this.hitTimer.unref?.();
   }
 
@@ -193,17 +198,12 @@ export class PetWindow {
       cursor.y >= bounds.y &&
       cursor.y < bounds.y + bounds.height;
     if (!inside) {
-      // 光标不在窗口内时保持可穿透，不再抢占桌面点击
-      if (!this.ignoreMouse) this.applyIgnore(true);
+      this.applyIgnore(true);
       return;
     }
     const localX = cursor.x - bounds.x;
     const localY = cursor.y - bounds.y;
-    const overCat = pointInEllipse(localX, localY, this.geometry.cat, 0.06);
-    const overBubble = this.geometry.bubble
-      ? pointInRect(localX, localY, this.geometry.bubble, 6)
-      : false;
-    this.applyIgnore(!(overCat || overBubble));
+    this.applyIgnore(!pointInEllipse(localX, localY, this.cat, 0.10));
   }
 
   private applyIgnore(ignore: boolean): void {
@@ -229,8 +229,4 @@ export class PetWindow {
       this.hitTimer = null;
     }
   }
-}
-
-export function cursorPoint(): Point {
-  return screen.getCursorScreenPoint();
 }

@@ -1,47 +1,47 @@
-/** 点击 / 摸头 / 主动说话用到的中文文案。 */
+/** 桌宠台词：短、克制，围绕“陪你写代码 / 盯着你的对话”。 */
 
-import type { Emotion } from './types';
+import type { Mood } from './types';
 
-export const CLICK_LINES: Record<Emotion, string[]> = {
-  happy: ['嘿嘿，被你摸到了。', '今天心情不错喵～', '再来一下也可以哦。', '本哈基米今天格外可爱。'],
-  confused: ['哈？', '你干嘛～', '本哈基米正在思考喵。', '刚刚…是不是有人碰我？'],
-  angry: ['摸我干什么！', '哼，手收回去。', '再戳我就生气了喵！', '你是不是又在摸鱼？'],
-  surprised: ['！！', '吓我一跳！', '你从哪冒出来的？', '别突然出现啊喵！'],
-  sleepy: ['困了…别吵。', '再睡五分钟…', '眼皮好重喵。'],
-  idle: ['哼，知道你在看我。', '有事吗？没事我继续发呆了。', '你忙你的，我看着。'],
+export const CLICK_LINES: Record<Mood, string[]> = {
+  idle: ['在呢。', '嗯？', '叫我干嘛。', '我一直在这儿。'],
+  curious: ['哈？', '你点我做什么。', '有事就说。'],
+  excited: ['开干了！', '又开一个对话？', '肝起来了。'],
+  annoyed: ['别老点我。', '手拿开。', '忙着呢。'],
+  sleepy: ['困……', '再睡会儿。'],
+  alert: ['跑着呢。', '别急，在想了。', '正在写代码。'],
 };
 
-export const PET_LINES = [
-  '舒服了喵～',
-  '再摸一下。',
-  '嗯…就这个位置。',
-  '摸头技术不错嘛。',
-  '呼噜呼噜…',
+export const PET_LINES = ['嗯。', '舒服。', '就这一下。', '继续。'];
+
+/** 有对话进行中时，偶尔冒的句子 */
+export const BUSY_LINES = [
+  '有一个还在跑。',
+  '它在想事情，别催。',
+  '正在敲代码。',
+  '对话没结束，我盯着呢。',
 ];
 
-export const FEED_LINES = [
-  '好吃！还要！',
-  '这波不亏喵。',
-  '哈基米正在暴风吸入。',
-  '谢谢投喂，记你一个好。',
-];
-
-/** 主动说话：默认安静，偶尔冒一句。 */
-export const IDLE_TALK_LINES = [
-  '你已经连续摸鱼很久了喵。',
-  '喝水了吗？没喝就去喝。',
-  '这个点还在写代码？',
-  '本哈基米在思考猫生。',
-  '盯——',
-  '桌面好干净，是不是还没开始干活。',
-  '困了就早点睡吧。',
-  '我在这儿看着呢，别偷懒。',
-  '今天的风评被害了吗？',
-  '需要我陪你一会儿吗？',
-  '有人在吗？没有的话我继续发呆。',
-  '喵。就一声，没别的意思。',
-];
+/** 全空闲时的静默台词 */
+export const IDLE_LINES = ['都在休息。', '没活儿了。', '等你开工。', '桌面挺安静。'];
 
 export function pick<T>(list: readonly T[], random: () => number = Math.random): T {
   return list[Math.floor(random() * list.length) % list.length];
+}
+
+/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 */
+export function relativeTime(timestamp: number, now = Date.now()): string {
+  const diff = Math.max(0, now - timestamp);
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
+/** 标题太长会撑破气泡，压到指定字符数 */
+export function shortTitle(title: string, limit = 18): string {
+  const clean = title.replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= limit) return clean;
+  return `${clean.slice(0, limit)}…`;
 }

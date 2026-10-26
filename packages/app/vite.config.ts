@@ -14,7 +14,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         pet: resolve(root, 'pet/index.html'),
-        settings: resolve(root, 'settings/index.html'),
         menu: resolve(root, 'menu/index.html'),
       },
     },

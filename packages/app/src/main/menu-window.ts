@@ -1,12 +1,12 @@
 import { BrowserWindow, screen } from 'electron';
 import { IPC } from '../shared/ipc';
-import type { Point } from '../shared/types';
+import type { PetSnapshot } from '../shared/types';
 import { PRELOAD_PATH, rendererUrl } from './paths';
 
-export const MENU_WIDTH = 214;
-export const MENU_HEIGHT = 286;
+export const MENU_WIDTH = 196;
+export const MENU_HEIGHT = 232;
 
-/** 自定义右键菜单：独立透明窗口，样式与桌宠统一，不弹原生菜单。 */
+/** 极简右键菜单：只留必要动作。 */
 export class MenuWindow {
   private win: BrowserWindow | null = null;
 
@@ -14,15 +14,15 @@ export class MenuWindow {
     return !!this.win && !this.win.isDestroyed() && this.win.isVisible();
   }
 
-  open(at: Point): void {
+  open(at: { x: number; y: number }, snapshot: PetSnapshot): void {
     this.close();
     const display = screen.getDisplayNearestPoint({ x: Math.round(at.x), y: Math.round(at.y) });
     const { workArea } = display;
     const x = Math.round(
-      Math.min(Math.max(at.x, workArea.x + 8), workArea.x + workArea.width - MENU_WIDTH - 8),
+      Math.min(Math.max(at.x, workArea.x + 6), workArea.x + workArea.width - MENU_WIDTH - 6),
     );
     const y = Math.round(
-      Math.min(Math.max(at.y, workArea.y + 8), workArea.y + workArea.height - MENU_HEIGHT - 8),
+      Math.min(Math.max(at.y, workArea.y + 6), workArea.y + workArea.height - MENU_HEIGHT - 6),
     );
 
     const win = new BrowserWindow({
@@ -54,16 +54,14 @@ export class MenuWindow {
     win.setAlwaysOnTop(true, 'pop-up-menu');
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    win.once('ready-to-show', () => {
-      win.show();
-      win.focus();
-    });
+    win.once('ready-to-show', () => win.show());
     win.on('blur', () => this.close());
     win.on('closed', () => {
       this.win = null;
     });
     void win.loadURL(rendererUrl('menu'));
     this.win = win;
+    win.webContents.once('did-finish-load', () => this.send(IPC.state, snapshot));
   }
 
   close(): void {

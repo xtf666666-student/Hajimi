@@ -1,35 +1,26 @@
-/** IPC 通道名集中定义，避免主进程与渲染进程写错字符串。 */
+/** IPC 通道名集中定义。 */
 
 export const IPC = {
-  // 渲染进程 -> 主进程（invoke）
-  getSnapshot: 'pet:get-snapshot',
+  // 渲染进程 -> 主进程
+  snapshot: 'pet:snapshot',
+  refresh: 'pet:refresh',
   click: 'pet:click',
   pet: 'pet:pet',
-  feed: 'pet:feed',
-  updateSettings: 'settings:update',
-  resetSettings: 'settings:reset',
-  getAppInfo: 'app:info',
-
-  // 渲染进程 -> 主进程（send）
-  reportGeometry: 'pet:geometry',
+  openDsh: 'dsh:open',
+  openSession: 'dsh:open-session',
   dragStart: 'pet:drag-start',
   dragEnd: 'pet:drag-end',
-  contextMenu: 'pet:context-menu',
-  openSettings: 'app:open-settings',
-  hidePet: 'app:hide-pet',
-  quit: 'app:quit',
-  closeSettings: 'settings:close',
+  geometry: 'pet:geometry',
+  listState: 'pet:list-state',
+  menu: 'pet:menu',
   menuAction: 'menu:action',
   closeMenu: 'menu:close',
-  ready: 'pet:ready',
+  quit: 'app:quit',
 
-  // 主进程 -> 渲染进程（on）
-  stateChanged: 'host:state',
-  say: 'host:say',
-  emotion: 'host:emotion',
-  command: 'host:command',
+  // 主进程 -> 渲染进程
+  state: 'host:state',
   dropped: 'host:dropped',
-  menuInit: 'host:menu-init',
+  command: 'host:command',
 } as const;
 
-export type IpcChannel = (typeof IPC)[keyof typeof IPC];
+export type { MenuAction } from './types';
