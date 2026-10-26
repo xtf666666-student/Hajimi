@@ -1,0 +1,13 @@
+node_modules/
+dist/
+release/
+out/
+selftest-artifacts/
+selftest-packaged/
+*.log
+.DS_Store
+Thumbs.db
+assets-src/work/
+.env
+.env.*
+!.env.example

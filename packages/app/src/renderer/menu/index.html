@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+    />
+    <title>哈基米菜单</title>
+    <link rel="stylesheet" href="./menu.css" />
+  </head>
+  <body>
+    <nav class="menu" id="menu" role="menu" aria-label="哈基米菜单">
+      <button class="item" role="menuitem" data-action="pet"><span class="icon">🐾</span>摸摸哈基米</button>
+      <button class="item" role="menuitem" data-action="feed"><span class="icon">🍗</span>喂食</button>
+      <button class="item" role="menuitem" data-action="cycle-size"><span class="icon">📏</span>切换大小</button>
+      <button class="item" role="menuitem" data-action="hide"><span class="icon">💤</span>暂时隐藏</button>
+      <div class="divider"></div>
+      <button class="item" role="menuitem" data-action="settings"><span class="icon">⚙️</span>打开设置</button>
+      <button class="item danger" role="menuitem" data-action="quit">
+        <span class="icon">🚪</span>退出桌宠
+      </button>
+    </nav>
+    <script type="module" src="./menu.ts"></script>
+  </body>
+</html>

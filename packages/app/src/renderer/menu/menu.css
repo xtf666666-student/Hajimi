@@ -1,0 +1,100 @@
+:root {
+  --ink: #46372a;
+  --ink-soft: #8b7764;
+  --line: rgba(230, 188, 138, 0.7);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  padding: 6px;
+  font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  color: var(--ink);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px;
+  border-radius: 16px;
+  border: 1.5px solid var(--line);
+  background: linear-gradient(180deg, #fffdf9, #fff4e6);
+  box-shadow:
+    0 14px 30px rgba(90, 58, 24, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  animation: menu-in 0.13s ease-out;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: left;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: linear-gradient(90deg, #ffe9cf, #ffe1c0);
+  outline: none;
+}
+
+.item:active {
+  background: #ffd9ae;
+}
+
+.icon {
+  width: 18px;
+  font-size: 13.5px;
+  text-align: center;
+  filter: saturate(0.9);
+}
+
+.divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: linear-gradient(90deg, transparent, rgba(216, 172, 122, 0.5), transparent);
+}
+
+.item.danger {
+  color: #c0503f;
+}
+
+.item.danger:hover {
+  background: linear-gradient(90deg, #ffe2dc, #ffd3ca);
+}

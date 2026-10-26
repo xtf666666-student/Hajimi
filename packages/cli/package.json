@@ -1,0 +1,41 @@
+{
+  "name": "hajimi-pet-cli",
+  "version": "1.0.0",
+  "description": "哈基米桌宠命令行安装器：一条命令安装 / 更新 / 卸载 Windows 桌面宠物",
+  "license": "MIT",
+  "author": "xtf666666-student",
+  "bin": {
+    "hajimi": "bin/hajimi.js",
+    "hajimi-pet": "bin/hajimi.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "pets.json",
+    "README.md"
+  ],
+  "keywords": [
+    "desktop-pet",
+    "hajimi",
+    "electron",
+    "installer",
+    "windows"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xtf666666-student/Hajimi.git"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  }
+}

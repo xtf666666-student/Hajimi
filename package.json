@@ -1,0 +1,28 @@
+{
+  "name": "hajimi-pet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "哈基米桌宠：Windows 透明桌面宠物 + 命令行安装器",
+  "workspaces": [
+    "packages/app",
+    "packages/cli"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @hajimi/app",
+    "build": "npm run build -w @hajimi/app",
+    "typecheck": "npm run typecheck -w @hajimi/app && npm run typecheck -w @hajimi/cli",
+    "selftest": "npm run selftest -w @hajimi/app",
+    "dist:win": "npm run dist:win -w @hajimi/app",
+    "cli:build": "npm run build -w @hajimi/cli",
+    "cli:test": "npm run test -w @hajimi/cli",
+    "manifest": "node scripts/make-manifest.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
+    "verify:shortcut": "node scripts/check-shortcut.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

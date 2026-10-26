@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws:"
+    />
+    <title>哈基米</title>
+    <link rel="stylesheet" href="./pet.css" />
+  </head>
+  <body>
+    <div class="stage" id="stage">
+      <div class="bubble" id="bubble" aria-live="polite">
+        <span id="bubble-text"></span>
+      </div>
+      <div class="scene">
+        <div class="shadow" id="shadow"></div>
+        <div class="float-wrap" id="float-wrap">
+          <div class="blink-wrap" id="blink-wrap">
+            <div class="pet3d" id="pet3d">
+              <img id="body" class="layer body" alt="哈基米" draggable="false" />
+              <img id="head" class="layer head" alt="" draggable="false" />
+              <img id="face" class="layer face" alt="" draggable="false" />
+              <div class="blush" id="blush"></div>
+              <div class="fx" id="fx"></div>
+              <div class="zzz" id="zzz">z z Z</div>
+              <div class="anger" id="anger">💢</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./pet.ts"></script>
+  </body>
+</html>
