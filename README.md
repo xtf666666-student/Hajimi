@@ -4,29 +4,43 @@
 
 ![哈基米桌宠预览](docs/preview.png)
 
+真实桌面效果（无边框、真透明、悬浮在普通窗口上方）：
+
+![真实桌面截图](docs/desktop.png)
+
 > 形象完全来自项目作者提供的真实照片（`assets-src/new/*.jpg`），没有替换成别的猫，也没有重绘成卡通形象。所有"表情"都是同一只猫的真实照片：眯眼笑、露牙傻笑、震惊张嘴。
 
 ---
 
-## 一条命令安装（CLI 安装器）
+## 一条命令安装
+
+```bash
+# ✅ 现在就能用（CLI 直接从 GitHub Release 拉取，无需 npm 发布）
+npx --yes https://github.com/xtf666666-student/Hajimi/releases/download/v1.0.0/hajimi-pet-cli-1.0.0.tgz install hajimi-desktop-pet
+```
+
+安装器会：识别 Windows / x64 → 从 GitHub Releases 下载便携版 → 校验 SHA-256 → 安装到本机 → 创建开始菜单快捷方式（加 `--desktop` 同时创建桌面快捷方式）。桌宠本体**不需要用户预装 Node.js**。
+
+等 CLI 发布到 npm 之后（见 [docs/RELEASE.md](docs/RELEASE.md)，只差一个 `npm publish`），命令会简化为：
 
 ```bash
 npx hajimi-pet-cli install hajimi-desktop-pet
 ```
 
-安装器会：识别 Windows / x64 → 从 GitHub Releases 下载便携版 → 校验 SHA-256 → 安装到本机 → 创建开始菜单快捷方式（加 `--desktop` 同时创建桌面快捷方式）。桌宠本体**不需要用户预装 Node.js**。
+也可以直接下载 `HajimiDesktopPet-Portable-1.0.0-x64.exe` 双击运行，或用 `HajimiDesktopPet-Setup-1.0.0-x64.exe` 走安装向导。
 
-> ⚠️ 发布状态：仓库里的安装包、`pets.json`、GitHub Actions 工作流、npm 包配置都已就绪并**在本地完整验证过**；但把它真正上传到 GitHub Releases、把 CLI 发布到 npm，需要作者的 GitHub / npm 凭据。详见 [docs/RELEASE.md](docs/RELEASE.md)。在完成那一步之前，`npx` 命令还不会对公网用户生效——请按文档用本地方式安装验证。
+> 发布状态：GitHub Release `v1.0.0` **已发布**，安装包、`SHA256SUMS.txt`、`pets.json`、CLI tarball 均已上传；上面的 `npx` 命令已在 Windows 11 实机跑通（下载 80.7 MB → SHA-256 → 安装 → 开始菜单快捷方式 → 启动）。npm 包尚未发布（缺少 npm 令牌）。
 
 ### CLI 命令
 
 ```bash
-npx hajimi-pet-cli install [id]      # 安装（默认 hajimi-desktop-pet）
-npx hajimi-pet-cli list              # 查看本机已安装桌宠
-npx hajimi-pet-cli update [id]       # 更新到最新版本
-npx hajimi-pet-cli uninstall [id]    # 卸载并清理快捷方式
-npx hajimi-pet-cli check [id]        # 只检查是否有新版本
-npx hajimi-pet-cli --help
+npx --yes https://github.com/xtf666666-student/Hajimi/releases/download/v1.0.0/hajimi-pet-cli-1.0.0.tgz install [id]
+# 或发布到 npm 之后：npx hajimi-pet-cli <命令>
+#   list       查看本机已安装桌宠
+#   update     更新到最新版本
+#   uninstall  卸载并清理快捷方式
+#   check      只检查是否有新版本
+#   --help
 ```
 
 常用选项：`--desktop`、`--no-shortcut`、`--release <版本>`、`--force`、`--installer`（改用官方 NSIS 安装包，默认使用便携版，**不静默执行任何脚本**）、`--verbose`。
@@ -143,15 +157,17 @@ pets.json                   注册表（CI 与 raw 链接使用）
 **已在本机（Windows 11 x64）实际验证**
 
 - `npm run build`、`npm run typecheck` 通过
-- 自检 10/10：透明像素 alpha=0、猫咪已渲染、contextBridge 可用、窗口无边框/不占任务栏、喂食逻辑、气泡+情绪动画、设置面板、右键菜单、设置生效并持久化、统计累计（框架内与打包后各跑一次）
+- 自检 10/10：透明像素 alpha=0、猫咪已渲染、contextBridge 可用、窗口无边框/不占任务栏、喂食逻辑、气泡+情绪动画、设置面板、右键菜单、设置生效并持久化、统计累计（源码运行 + 打包后各跑一次）
 - `electron-builder` 产出 `HajimiDesktopPet-Setup-1.0.0-x64.exe`（84.9 MB）与 `HajimiDesktopPet-Portable-1.0.0-x64.exe`（84.6 MB），两者均实际启动成功
+- **GitHub Release v1.0.0 已发布**，资产上传成功（HTTP 201 × 6）
+- **真实用户命令跑通**：`npx --yes <GitHub tarball URL> install` → 下载 80.7 MB → SHA-256 校验 → 安装到 `%LOCALAPPDATA%\HajimiPet` → 创建开始菜单快捷方式 → 从快捷方式启动成功
+- 桌宠在真实桌面上悬浮截图确认：真透明、置顶、无边框、不挡桌面点击
 - CLI 9/9 测试通过；用真实 80.7 MB 便携版跑通"下载 → SHA-256 → 安装 → list → 卸载"
-- 快捷方式创建/删除（WScript.Shell）验证通过
 
 **未验证（需要作者凭据或另一台机器）**
 
-- GitHub Releases 真实上传与公网下载
-- npm 包真实发布与 `npx hajimi-pet-cli install` 在别人电脑上的效果
+- npm 包真实发布（需要 `NPM_TOKEN`，本地没有 npm 登录态）
+- 其他用户在**另一台电脑**上的安装体验（本机已用公网 URL 验证过下载与安装链路）
 - Windows 10、多显示器、高 DPI 下的实机表现
 - 代码签名（当前未签名，SmartScreen 会有提示）
 

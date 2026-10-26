@@ -2,6 +2,9 @@
 
 哈基米桌宠的命令行安装器：一条命令下载、校验并安装 Windows 桌面宠物。
 
+> 尚未发布到 npm 时，可以直接用 GitHub Release 里的 tarball：
+> `npx --yes https://github.com/xtf666666-student/Hajimi/releases/download/v1.0.0/hajimi-pet-cli-1.0.0.tgz install hajimi-desktop-pet`
+
 ```bash
 npx hajimi-pet-cli install hajimi-desktop-pet
 npx hajimi-pet-cli list

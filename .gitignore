@@ -11,3 +11,7 @@ assets-src/work/
 .env
 .env.*
 !.env.example
+packages/cli/*.tgz
+release-*.json
+upload-*.json
+release-payload.json
