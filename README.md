@@ -6,6 +6,10 @@
 
 ![真实桌面效果](docs/desktop-dsh.png)
 
+展开对话列表：
+
+![对话列表](docs/pet-list.png)
+
 > 形象来自你提供的 3D 渲染图（`assets-src/pet3d/ref.png`），白色影棚背景已被抠掉，猫咪四周是真 alpha=0，没有被替换或重绘。
 
 ---
@@ -152,3 +156,7 @@ tools/assets/build_assets.py   从 3D 渲染图生成透明素材（可复现）
 ## 许可
 
 MIT。
+
+## 已移除的东西
+
+按你的要求，这一版删掉了：CLI 安装器、npm 包、GitHub Release 流水线与所有发布资产、设置面板、喂食/饱食度、主动说话、多表情特写图。之前发布过的 1.0.0 Release 与 tag **已从 GitHub 删除**，仓库里也不再有任何发布脚本。
