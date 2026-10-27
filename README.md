@@ -130,6 +130,32 @@ tools/assets/build_assets.py   从 3D 渲染图生成透明素材（可复现）
 
 **性能**：待机只用 CSS `transform/opacity`；所有定时器单例并在退出时清理；DSH 扫描带 1.2 秒缓存，轮询间隔 4 秒。
 
+## 内存占用（实测）
+
+打包版在 Windows 11 x64 上静置运行，连续采样 5 分钟，共 4 个进程：
+
+| 采样 | WorkingSet 合计 | Private 合计 | GPU 进程 |
+| --- | --- | --- | --- |
+| 8s | 327.3 MB | 192.3 MB | 100.4 MB |
+| 60s | 327.6 MB | 189.3 MB | 101.2 MB |
+| 180s | 328.7 MB | 189.2 MB | 101.5 MB |
+| 300s | 329.0 MB | 189.5 MB | 101.7 MB |
+
+- **稳定在 327~329 MB WorkingSet / 约 190 MB Private**，5 分钟内几乎不增长（无泄漏迹象）
+- 进程构成：main ≈100 MB、gpu ≈101 MB、
+enderer ≈78 MB、utility ≈49 MB
+- 早期有一次测得 367 MB，是系统后台活动把 GPU 进程抬高后的读数，长时间静置会回到 328 MB 左右
+
+**这是 Electron 的固有成本，不是这个桌宠写得重**：一个空白的 Electron 窗口也是 200MB 起。我试过以下方案，都没能降下来，已全部回退：
+
+- disable-gpu + disableHardwareAcceleration()：GPU 进程照样存在且仍是 101 MB
+- in-process-gpu：GPU 进程没合并，反而一直保持满载，326 MB 不回落
+- disable-software-rasterizer：无变化
+- 
+enderer-process-limit=1、关掉 MediaRouter/Translate/网络预取等开关：对已稳定的小窗口没有可测收益
+
+要真正把内存压到 30~60 MB 级别，得换掉 Electron（例如 Rust + Tauri 或原生 Win32 分层窗口）。当前阶段我优先保证透明窗口、拖动手感、多屏边界这些已经验证过的行为，没有为了省内存去换技术栈。
+
 ## 已验证 / 未验证
 
 **本机 Windows 11 x64 实测通过**
