@@ -1,188 +1,157 @@
-# 哈基米桌宠 · DeepSeek Harness 专用
+# 哈基米桌宠
 
-一只常驻 Windows 桌面的哈基米猫猫桌宠，专为 DeepSeek Harness 服务：只做一件事——**告诉你现在有几个 DSH 对话在跑，并且一键把 DSH 叫到面前**。
+一只常驻 Windows 桌面的哈基米猫猫桌宠，专为 **DeepSeek Harness** 服务：显示正在运行的对话数，鼠标移到身上会**抬脚原地跑**，单击唤出 DSH。
 
-它很小，只占桌面 1~2 个图标的位置，不挡工作区；没有设置面板、没有喂食、没有花哨面板，只有鼠标交互和几个它自己的小动作。
+**原生实现，不是 Electron。** 单文件 671 KB，常驻内存约 43 MB。
 
-![真实桌面效果](docs/desktop-dsh.png)
-
-展开对话列表：
-
-![对话列表](docs/pet-list.png)
-
-> 形象来自你提供的 3D 渲染图（`assets-src/pet3d/ref.png`），白色影棚背景已被抠掉，猫咪四周是真 alpha=0，没有被替换或重绘。
+![跑步循环](docs/run-cycle.png)
 
 ---
 
-## 功能
+## 一条命令安装
 
-| 功能 | 说明 |
+```bash
+npx hajimi-pet-cli install hajimi-desktop-pet
+```
+
+安装器会：识别 Windows / x64 → 把 **671 KB 的原生 exe** 复制到本机 → 创建开始菜单快捷方式（可选桌面 / 开机自启），并打印安装位置与体积。
+
+> 桌宠本体不需要 Node.js，只有这条安装命令需要。
+
+### CLI 命令
+
+```bash
+npx hajimi-pet-cli install [id]      # 安装（默认 hajimi-desktop-pet）
+npx hajimi-pet-cli list              # 查看已安装桌宠
+npx hajimi-pet-cli update [id]       # 用当前包版本覆盖安装
+npx hajimi-pet-cli uninstall [id]    # 卸载并清理快捷方式
+npx hajimi-pet-cli --help
+```
+
+选项：`--desktop`、`--autostart`、`--no-shortcut`、`--verbose`。
+
+---
+
+## 交互
+
+| 操作 | 效果 |
 | --- | --- |
-| **对话计数角标** | 猫头顶的小胶囊显示「进行中的对话数」，有对话在跑时变绿并跳动 |
-| **单击** | 说一句 + **直接唤出 DeepSeek Harness**（`dsh://open`） |
-| **点角标** | 展开对话列表：每个对话显示标题、相对时间、是否进行中 |
-| **点列表里的某条** | 唤出 DSH，并把该对话标题放进剪贴板（DSH 只注册了 `dsh://open`，没有逐会话深链接，详见下文） |
-| **双击猫** | 摸头，猫会晃一下并出现一个小星标 |
-| **右键** | 极简菜单：打开 DSH / 刷新状态 / 切换大小 / 开关动画 / 隐藏 / 退出 |
-| **拖动** | 按住拖到任意位置，松手自动贴回屏幕内 |
-| **自动刷新** | 每 4 秒读一次 DSH 会话缓存，计数变化立刻推送到界面 |
+| **单击猫** | 说一句话 + 唤出 DeepSeek Harness |
+| **双击猫** | 摸头 |
+| **拖动** | 移到任意位置，松手自动贴回屏幕内 |
+| **右键猫** | 弹出菜单 |
+| **点头顶数字** | 展开「正在运行」的对话标题列表 |
+| **点列表里的标题** | 唤出 DSH + 把标题复制到剪贴板 |
+| **鼠标停留在猫身上** | 有任务在跑 → **双脚交替抬起、绕脚踝滚动、身体起伏前倾（原地跑）**；没任务 → 只做轻微呼吸与随鼠标转头 |
 
-### 猫自己的小动作
+托盘图标（猫头）：左键显示/隐藏；右键有实时统计与大小档位（72 / 104 / 140 / 180）。
 
-- `idle`：呼吸起伏 + 缓慢左右转头（视差）
-- `curious`：被点时左右歪头
-- `excited`：有新对话开始时原地跳两下 + 星星闪烁
-- `alert`：有对话在跑时头部轻微上下抬（像在盯着屏幕）
-- `sleepy`：长时间没动静时打盹，轻微倾斜
-- `annoyed`：被连续戳时抖一下
-- 鼠标在猫身上移动时会**真实 3D 转头**：身体与头部分处不同深度层，跟著光标产生视差
+## 头顶的数字
 
----
+- 只显示**正在运行**的对话数；有任务在跑时变绿
+- 0 时是灰底，不打扰
+- 点它展开正在运行的对话标题（带相对时间）
+- 数字变化时会跳一下
 
-## 数据从哪来
+## 数据来源
 
-DSH 把每个对话的缓存写在：
+只读 DeepSeek Harness 自己的会话缓存：
 
 ```
 %USERPROFILE%\.dsh\storages\session_projcache\sessions\session-<uuid>.json
 ```
 
-桌宠只读取其中的：
+判定「正在运行」的依据：`record.rows.turnBoundary.val.lastStepBoundary.kind === "start"` 且 `openTurnStartSeq > 0`，即这一轮还没收到结束标记。
 
-- `record.rows.title.val` → 对话标题
-- `record.rows.turnBoundary.val.lastStepBoundary.kind` → 为 `"start"` 且 `openTurnStartSeq > 0` 时判定为**进行中**
-- `record.identity.cwd` → 所属工作区
-- 文件 `mtime` → 相对时间
-
-只读、不写、不联网、不上传。哪怕 DSH 正在写文件导致 JSON 半截，桌宠也只是跳过那一条，不会崩。
-
-## 关于「点击进入具体对话」的说明（重要）
-
-我把 DSH 桌面端主进程的协议注册翻了一遍：
-
-```js
-app.setAsDefaultProtocolClient("dsh");
-app.on("open-url", (event, url) => {
-  if (url === "dsh://open" || url === "dsh://open/") focusPrimaryWindow();
-});
-```
-
-**DSH 只支持 `dsh://open`（聚焦主窗口），没有任何 `dsh://session/<id>` 之类的逐会话深链接，也没有命令行参数入口。** 所以我没有假装能直接跳转，而是做了实际可行的两步：
-
-1. 单击 → 唤出 DSH；
-2. 点列表项 → 唤出 DSH + 把该对话标题复制到剪贴板，回到 DSH 按 `Ctrl+K` 粘贴即可定位。
-
-如果你希望真正一键跳转，需要 DSH 端提供深链接或命令行入口 —— 这不是桌宠这边能绕过的。
+桌宠**不联网、不上传、不写入**任何 DSH 数据；解析失败的单条会话直接跳过。
 
 ---
 
-## 运行
+## 轻量化对比
 
-环境要求：Windows 10/11、Node.js ≥ 20。
+| | Electron 版（已废弃） | 当前原生版 |
+| --- | --- | --- |
+| 安装体积 | 78.4 MB | **671 KB** |
+| WorkingSet 内存 | 328 MB | **43 MB** |
+| Private 内存 | 190 MB | **27 MB** |
+| 进程数 | 4（main/gpu/renderer/utility） | **1** |
+| 运行时依赖 | 内置 Chromium | .NET Framework 4.8（Windows 自带） |
 
-```bash
-npm install
-npm run build      # 编译主进程 + preload + 渲染层
-npm run selftest   # 真启动、真截图、真读 DSH 会话，13 项自检
-npm run dev        # Vite + Electron 开发模式
-npm start -w @hajimi/app   # 直接跑打包后的产物
-npm run dist:win   # 打 Windows x64 安装包与便携版（输出到 packages/app/release）
+内存为 Windows 11 x64 静置 5 分钟的实测中位数。
+
+## 技术实现
+
+**分层窗口**：这是一张 3D 渲染图，腿只占约 30px 高，无法靠「整体平移」演出跑步。所以按实测缝隙把它切成图层：
+
+```
+pet-torso.png      躯干，最后绘制，压住脚踝切口
+pet-leg-left.png   左脚，绕自己的脚踝 (100, 406) 旋转
+pet-leg-right.png  右脚，绕自己的脚踝 (272, 406) 旋转
+pet-shadow.png     独立柔和地面阴影
 ```
 
-素材重建（从 3D 参考图重新抠图）：
+切割依据（实测）：双脚在 **y=406** 才真正分开，所以从那里切；躯干硬切在 406 并被**最后绘制**，因此脚抬起或旋转时永远不会露出洞。
 
-```bash
-npm run assets
-```
+**透明窗口**：`WS_EX_LAYERED` + `UpdateLayeredWindow` 提交 32 位 ARGB 位图，四周是真 alpha=0；配合 `WS_EX_TOOLWINDOW` 不占任务栏、`WS_EX_NOACTIVATE` 不抢焦点。
+
+**点击穿透**：窗口比猫大（要容纳角标与列表），命中测试只认猫本体的椭圆范围，透明区域完全不吃桌面点击。
+
+**性能**：33ms 定时器重绘；会话扫描 4 秒一次；无任务且鼠标不在身上时几乎只有呼吸动画。
 
 ## 项目结构
 
 ```
-packages/app/
-  assets/             pet-body.png / pet-head.png / 图标（运行时素材）
-  src/main/
-    index.ts          应用入口、单实例、崩溃日志
-    pet-app.ts        应用协调器：窗口、托盘、轮询、说话调度
-    pet-window.ts     透明桌宠窗口：拖动、点击穿透、尺寸、列表展开
-    menu-window.ts    自定义右键菜单
-    dsh-bridge.ts     读 DSH 会话缓存，算出「进行中」数量
-    pet-context.ts    本地状态持久化 + 快照
-    layout.ts         窗口尺寸、位置约束、椭圆命中、dsh://open
-    ipc.ts            白名单 IPC
-    selftest.ts       无界面自检
-  src/preload/        contextBridge（沙箱启用）
-  src/renderer/pet/   桌宠页面（计数、气泡、列表、3D 倾斜）
-  src/renderer/menu/  右键菜单页面
-tools/assets/build_assets.py   从 3D 渲染图生成透明素材（可复现）
+packages/
+  native/          C# 原生桌宠（.NET Framework 4.8）
+    src/PetForm.cs        分层窗口、跑步动画、角标、列表、拖动
+    src/SessionScanner.cs 读 DSH 会话缓存
+    src/Program.cs        托盘、单实例、dsh://open
+    Assets/               运行时图层（躯干 / 双脚 / 阴影 / 图标）
+  cli/             npm 安装器 hajimi-pet-cli
+    src/cli.js            安装 / 更新 / 卸载 / 列表
+    assets/HajimiPet.exe  随包分发的桌宠本体
+    test/cli.test.mjs     12 个端到端用例
+tools/
+  assets/build_assets.py  从 3D 渲染图抠出主体
+  assets/build_layers.py  切成躯干 + 双脚（含实测坐标与不变式说明）
+  build-native.mjs        构建 + 拷入 CLI 包 + 刷新 sha256
+  selftest_native.py      真实启动自检（10 项）
+  verify_install.py       安装 → 启动 → 卸载全链路
+  verify_npx.py           npx 真实安装验证
 ```
 
-## 技术要点
+## 开发
 
-**真透明**：`transparent: true, frame: false, hasShadow: false, backgroundColor: '#00000000'`，页面背景全透明，自检直接读截图像素确认 alpha=0。
-
-**点击穿透**：窗口比猫大（要容纳角标和列表），主进程每 80ms 用光标坐标做椭圆命中，光标不在猫身上时 `setIgnoreMouseEvents(true, { forward: true })`，所以透明区域完全不吃桌面点击。
-
-**拖动**：渲染层 `pointerdown`，位移超过 4px 判定拖动；主进程按 16ms 轮询光标 `setPosition`，跟手且不会误触发单击。
-
-**2.5D 视差**：素材拆成「身体层」+「头部层」（同一张图，头部单独抠成椭圆），两层放在 `preserve-3d` 容器里，头部 `translateZ` 更靠前；鼠标移动时按位置算 `rotateX/rotateY`，头身产生真实视差。
-
-**安全**：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`，preload 只暴露白名单方法；页面禁止外部导航与新窗口。
-
-**性能**：待机只用 CSS `transform/opacity`；所有定时器单例并在退出时清理；DSH 扫描带 1.2 秒缓存，轮询间隔 4 秒。
-
-## 内存占用（实测）
-
-打包版在 Windows 11 x64 上静置运行，连续采样 5 分钟，共 4 个进程：
-
-| 采样 | WorkingSet 合计 | Private 合计 | GPU 进程 |
-| --- | --- | --- | --- |
-| 8s | 327.3 MB | 192.3 MB | 100.4 MB |
-| 60s | 327.6 MB | 189.3 MB | 101.2 MB |
-| 180s | 328.7 MB | 189.2 MB | 101.5 MB |
-| 300s | 329.0 MB | 189.5 MB | 101.7 MB |
-
-- **稳定在 327~329 MB WorkingSet / 约 190 MB Private**，5 分钟内几乎不增长（无泄漏迹象）
-- 进程构成：main ≈100 MB、gpu ≈101 MB、
-enderer ≈78 MB、utility ≈49 MB
-- 早期有一次测得 367 MB，是系统后台活动把 GPU 进程抬高后的读数，长时间静置会回到 328 MB 左右
-
-**这是 Electron 的固有成本，不是这个桌宠写得重**：一个空白的 Electron 窗口也是 200MB 起。我试过以下方案，都没能降下来，已全部回退：
-
-- disable-gpu + disableHardwareAcceleration()：GPU 进程照样存在且仍是 101 MB
-- in-process-gpu：GPU 进程没合并，反而一直保持满载，326 MB 不回落
-- disable-software-rasterizer：无变化
-- 
-enderer-process-limit=1、关掉 MediaRouter/Translate/网络预取等开关：对已稳定的小窗口没有可测收益
-
-要真正把内存压到 30~60 MB 级别，得换掉 Electron（例如 Rust + Tauri 或原生 Win32 分层窗口）。当前阶段我优先保证透明窗口、拖动手感、多屏边界这些已经验证过的行为，没有为了省内存去换技术栈。
+```bash
+npm run assets        # 重建图层素材（需要 Python + opencv + Pillow）
+npm run build         # dotnet build + 拷进 CLI 包 + 刷新 sha256
+npm run selftest      # 真实启动、截图、检查透明/动画/DSH 数据（10 项）
+npm run test:cli      # CLI 端到端测试（12 项）
+npm run pack:cli      # 打 npm tarball
+```
 
 ## 已验证 / 未验证
 
-**本机 Windows 11 x64 实测通过**
+**Windows 11 x64 实测通过**
 
-- `npm run build`、主进程与渲染层 `tsc --noEmit` 全绿
-- 自检 **13/13**：透明 alpha=0、猫已渲染、读到 DSH 7 个对话、进行中计数一致、角标渲染、尺寸 104px、无边框/置顶/不占任务栏、情绪+气泡、列表可展开（7 条）、展开时窗口长高、右键菜单、尺寸设置生效、状态保存路径
-- 真实桌面截图确认：桌宠悬浮在右下角，绿色角标「1」对应确实有 1 个对话在跑
-- 单击唤出 DSH（`dsh://open`）——DSH 本就注册了该协议
-- 拖动、置顶、点击穿透：代码路径与命中测试已在自检与实机中验证
+- 原生自检 **10/10**：窗口创建、尺寸合理、`WS_EX_LAYERED`、`WS_EX_TOOLWINDOW`、猫已渲染、跑步帧间差异（18.3）、双脚位移（7.7）、读到 DSH 10 个对话（1 个进行中）、三档尺寸生效
+- CLI 测试 **12/12**：help/version、未知命令与选项、安装落地、PE 头校验、体积上限、list、update、旧版本清理、卸载清理、重复卸载、未知 ID、sha256 一致
+- **`npx` 真实安装**：`npx --yes ./hajimi-pet-cli-1.0.0.tgz install` → 671 KB exe 落地 → 启动 → 分层透明窗口 → `npx list` 正常 → 卸载清理干净
+- 安装后启动实测：WorkingSet 42.6 MB / Private 26.7 MB
+- 跑步动画通过真实桌面抓屏验证（帧间像素差 14.3）
 
 **未验证**
 
-- Windows 10、多显示器、高 DPI 缩放下的表现
-- 拖到第二个显示器时的边界约束（用的是光标所在屏的工作区，逻辑正确但未实机多屏测试）
-- 列表里点击后 DSH 内粘贴定位这一步是人工确认的（剪贴板内容已验证写入）
+- Windows 10、多显示器、高 DPI 缩放
+- npm 公网发布（需要 npm 凭据；包已在本机打好并验证安装）
+- 代码签名（未签名，SmartScreen 首次运行会提示）
 
 ## 已知限制
 
-- 只有一个正面机位，"走路/转身"无法自然实现，所以只做了原地小动作。
-- 照片没有闭眼素材，所以没有做眨眼。
-- `dsh://open` 若被系统安全软件或浏览器抢占，唤出可能失败，此时菜单里"打开 DeepSeek Harness"仍需手动点一次。
-- 未做代码签名，SmartScreen 首次运行会有提示。
+- **点标题无法直接跳进那个会话**。DSH 只注册了 `dsh://open`（聚焦窗口），没有逐会话深链接，也没有命令行入口 —— 详见 [docs/dsh-session-entry.md](docs/dsh-session-entry.md)，那份文档列出了我查过的全部入口与结论。所以这个操作做成：唤出 DSH + 把标题复制到剪贴板。
+- 素材只有一个正面机位，跑步是图层旋转模拟，不是真正的骨骼动画；因此在极小尺寸（72px）下腿部动作会不太明显。
+- 未做代码签名。
 
 ## 许可
 
 MIT。
-
-## 已移除的东西
-
-按你的要求，这一版删掉了：CLI 安装器、npm 包、GitHub Release 流水线与所有发布资产、设置面板、喂食/饱食度、主动说话、多表情特写图。之前发布过的 1.0.0 Release 与 tag **已从 GitHub 删除**，仓库里也不再有任何发布脚本。

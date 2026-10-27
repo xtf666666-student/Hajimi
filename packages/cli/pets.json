@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-27T11:30:29.556Z",
+  "pets": [
+    {
+      "id": "hajimi-desktop-pet",
+      "name": "哈基米桌宠",
+      "description": "常驻 Windows 桌面的哈基米猫猫桌宠：显示 DeepSeek Harness 里正在运行的对话数，鼠标移到身上会原地跑，单击唤出 DSH。原生 exe，约 700KB，内存约 43MB。",
+      "repo": "xtf666666-student/Hajimi",
+      "homepage": "https://github.com/xtf666666-student/Hajimi",
+      "latest": "1.0.0",
+      "bundled": true,
+      "releases": {
+        "1.0.0": {
+          "version": "1.0.0",
+          "releasedAt": "2026-10-27",
+          "assets": {
+            "win32-x64": {
+              "bundled": {
+                "path": "assets/HajimiPet.exe",
+                "sha256": "171adb035d975f682c6f99788c333376524d0f5fad13695890472e3a0067ec4b"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "hajimi-pet-cli",
+  "version": "1.0.0",
+  "description": "哈基米桌宠命令行安装器：一条命令安装/更新/卸载 Windows 桌面宠物（原生 exe，约 700KB，无需 Electron）",
+  "license": "MIT",
+  "bin": {
+    "hajimi-pet": "bin/hajimi.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "assets",
+    "pets.json",
+    "README.md"
+  ],
+  "keywords": [
+    "desktop-pet",
+    "hajimi",
+    "cat",
+    "windows",
+    "installer",
+    "deepseek-harness"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/cli.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xtf666666-student/Hajimi.git"
+  },
+  "homepage": "https://github.com/xtf666666-student/Hajimi",
+  "bugs": {
+    "url": "https://github.com/xtf666666-student/Hajimi/issues"
+  }
+}

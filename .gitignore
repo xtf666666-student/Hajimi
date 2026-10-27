@@ -1,8 +1,14 @@
+# 构建产物
 node_modules/
 dist/
+bin/
+obj/
 release/
 selftest-artifacts/
 selftest-packaged/
+# 工具中间产物
+tools/out/
+*.tgz
 *.log
 .DS_Store
 Thumbs.db

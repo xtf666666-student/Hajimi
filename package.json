@@ -1,23 +1,16 @@
 {
-  "name": "hajimi-dsh-pet",
-  "version": "1.1.0",
+  "name": "hajimi-pet",
+  "version": "2.0.0",
   "private": true,
-  "description": "哈基米桌宠 · DeepSeek Harness 专用",
-  "workspaces": [
-    "packages/app"
-  ],
+  "description": "哈基米桌宠 · 原生 Windows 桌宠 + npx 安装器",
   "scripts": {
-    "dev": "npm run dev -w @hajimi/app",
-    "build": "npm run build -w @hajimi/app",
-    "typecheck": "npm run typecheck -w @hajimi/app",
-    "selftest": "npm run selftest -w @hajimi/app",
-    "dist:win": "npm run dist:win -w @hajimi/app",
-    "assets": "python tools/assets/build_assets.py"
+    "build": "node tools/build-native.mjs",
+    "assets": "python tools/assets/build_assets.py && python tools/assets/build_layers.py",
+    "selftest": "python tools/selftest_native.py",
+    "test:cli": "node --test packages/cli/test/cli.test.mjs",
+    "pack:cli": "node tools/pack-cli.mjs"
   },
   "engines": {
-    "node": ">=20"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.3"
+    "node": ">=18"
   }
 }
