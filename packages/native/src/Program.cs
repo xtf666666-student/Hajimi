@@ -28,6 +28,7 @@ namespace HajimiPet
 
             int size = 104;
             bool demoRun = false;
+            int? activeOverride = null;
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--size" && i + 1 < args.Length)
@@ -40,13 +41,40 @@ namespace HajimiPet
                     // 仅用于截图与自检：强制进入跑步状态
                     demoRun = true;
                 }
+                else if (args[i] == "--active" && i + 1 < args.Length)
+                {
+                    // 仅用于自检：强制覆盖进行中的对话数
+                    int parsed;
+                    if (int.TryParse(args[i + 1], out parsed)) activeOverride = parsed;
+                }
             }
 
             _pet = new PetForm();
             _pet.ApplySize(size);
             _pet.DemoRun = demoRun;
+            _pet.DebugActiveOverride = activeOverride;
             _pet.OpenDshRequested += OpenDsh;
             _pet.SessionRequested += OnSessionRequested;
+            // 进行中对话数变化时，托盘统计跟着刷新
+            _pet.ActiveCountChanged += count => RefreshTray();
+
+            // 自检导图：把真实渲染输出写成 PNG 后直接退出，不显示窗口。
+            // 分层窗口内容无法被系统截图可靠捕获，这是唯一能验证真实绘制的方式。
+            string dumpDir = null;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "--dump" && i + 1 < args.Length) dumpDir = args[i + 1];
+            }
+            if (dumpDir != null)
+            {
+                System.IO.Directory.CreateDirectory(dumpDir);
+                _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "idle.png"), false, 0);
+                _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy3.png"), false, 3);
+                _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy3-list.png"), true, 3);
+                _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy1-list.png"), true, 1);
+                Console.Out.Write("dump done -> " + dumpDir);
+                return;
+            }
 
             BuildTray();
             _pet.Show();
@@ -75,6 +103,9 @@ namespace HajimiPet
 
         private static void RefreshTray()
         {
+            // 托盘尚未创建时（例如自检导图模式）直接跳过，避免空引用
+            if (_tray == null || _pet == null) return;
+
             if (_menu != null) _menu.Dispose();
             _menu = new ContextMenuStrip();
             _menu.Items.Add(new ToolStripMenuItem("进行中：" + _pet.ActiveCount + " 个对话") { Enabled = false });

@@ -97,6 +97,8 @@ namespace HajimiPet
 
         private int _bubbleLeft;
         private string _bubble = string.Empty;
+        private int _badgePulse;
+        private int _lastNotified;
 
         private bool _listOpen;
         private int _activeCount;
@@ -107,9 +109,35 @@ namespace HajimiPet
 
         public event Action OpenDshRequested;
         public event Action<SessionItem> SessionRequested;
+        /// <summary>进行中对话数发生变化时触发（托盘据此刷新统计）。</summary>
+        public event Action<int> ActiveCountChanged;
 
         public int PetSize { get; private set; }
         public bool DemoRun { get; set; }
+        /// <summary>测试用：强制覆盖"进行中对话数"，用于验证空闲态外观。</summary>
+        public int? DebugActiveOverride { get; set; }
+
+        /// <summary>
+        /// 自检用：把当前渲染结果导出为 PNG。
+        /// 分层窗口内容无法被 PrintWindow / 抓屏可靠捕获，所以让程序自己吐图，
+        /// 这样验证的是真实渲染输出，不依赖系统合成状态。
+        /// </summary>
+        public void DumpFrame(string path, bool listOpen, int activeOverride)
+        {
+            _listOpen = listOpen;
+            DebugActiveOverride = activeOverride;
+            Poll();
+            ApplyLayout();
+            Render();
+
+            int w = ClientSize.Width;
+            int h = ClientSize.Height;
+            using (Bitmap canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                DrawScene(canvas, w, h);
+                canvas.Save(path, ImageFormat.Png);
+            }
+        }
 
         public PetForm()
         {
@@ -131,7 +159,8 @@ namespace HajimiPet
             Left = work.Right - Width - 24;
             Top = work.Bottom - Height - 6;
 
-            _poll = new Timer { Interval = 4000 };
+            // 1.5 秒轮询：新任务出现后最迟 1.5 秒就能同步到角标与列表
+            _poll = new Timer { Interval = 1500 };
             _poll.Tick += (s, e) => Poll();
             _poll.Start();
             Poll();
@@ -164,9 +193,30 @@ namespace HajimiPet
         {
             int catH = PetSize;
             int catW = (int)(PetSize * 0.817f);
-            // 底部要留出抬脚 + 地面阴影的余量，否则跑动时脚会被窗口裁掉
-            int footRoom = (int)(PetSize * 0.10f) + 6;
-            ClientSize = new Size(catW + 14, BadgeH + BadgeGap + catH + footRoom);
+            int shadowH = Math.Max(6, (int)(catH * 0.06f));
+
+            int listH = CurrentListHeight();
+
+            int baseW = catW + 14;
+            int w = listH > 0 ? Math.Max(baseW, ListWidth + 10) : baseW;
+            // 底部区域：角标 + 猫 + 阴影（固定的"主体高度"）
+            int bodyH = BadgeH + BadgeGap + catH + shadowH;
+            // 列表展开时，在主体上方额外加上列表高度
+            int h = bodyH + listH;
+            ClientSize = new Size(w, h);
+        }
+
+        private const int ListWidth = 214;
+        private const int ListRowH = 20;
+        private const int ListPadY = 6;
+        private const int ListMaxRows = 8;
+
+        private int CurrentListHeight()
+        {
+            if (!_listOpen) return 0;
+            int count = Math.Min(_active.Count, ListMaxRows);
+            if (count <= 0) return 0;
+            return count * ListRowH + ListPadY;
         }
 
         private static Bitmap LoadBitmap(string name)
@@ -204,6 +254,7 @@ namespace HajimiPet
             if (sprinting) _runFrame++;
 
             if (_bubbleLeft > 0) _bubbleLeft--;
+            if (_badgePulse > 0) _badgePulse--;
 
             Render();
         }
@@ -212,23 +263,39 @@ namespace HajimiPet
         {
             int w = ClientSize.Width;
             int h = ClientSize.Height;
-            bool sprinting = (DemoRun || (_activeCount > 0 && _hover && !_listOpen));
 
             using (Bitmap canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb))
             {
-                using (Graphics g = Graphics.FromImage(canvas))
-                {
-                    g.Clear(Color.Transparent);
-                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                }
+                DrawScene(canvas, w, h);
+                ApplyLayered(canvas, w, h);
+            }
+        }
 
+        /// <summary>把整个桌宠场景画进 canvas。实时渲染与自检导图共用这一份。</summary>
+        private void DrawScene(Bitmap canvas, int w, int h)
+        {
+            bool sprinting = (DemoRun || (_activeCount > 0 && _hover && !_listOpen));
+
+            using (Graphics g = Graphics.FromImage(canvas))
+            {
+                g.Clear(Color.Transparent);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+            }
+
+            {
                 int catH = PetSize;
                 int catW = (int)(PetSize * 0.817f);
                 int catX = (w - catW) / 2;
-                int catY = BadgeH + BadgeGap;
+                // 猫始终固定在窗口底部（脚底+阴影不因列表展开而移动），
+                // 列表向上升，这样展开时猫不会掉出窗口，也不会被任务栏遮住。
+                int shadowH = Math.Max(6, (int)(catH * 0.06f));
+                int catY = h - shadowH - catH;
                 float scale = PetSize / SRC_H;
+
+                // 脚底线：素材里脚底在 439/460
+                int footY = catY + (int)(catH * (439f / 460f));
 
                 // ---- Run cycle: 6 frames, mirrors tools/verify_layers.py ----
                 float bodyBob, lean, dash, liftL, liftR, ankL, ankR;
@@ -259,10 +326,11 @@ namespace HajimiPet
                 float sway = (float)Math.Sin(_phase * (sprinting ? 1.4f : 0.55f)) *
                              (sprinting ? 2.2f : 1.6f);
 
-                // 1. ground shadow (stretches slightly while running)
+                // 1. 地面阴影：顶端对齐脚底线，向下铺开，紧贴脚底不留缝
                 int sw = (int)(_shadow.Width * scale * (1f + 0.06f * Math.Abs(dash)));
-                int sh = Math.Max(4, (int)(_shadow.Height * scale));
-                DrawPlain(canvas, _shadow, new Rectangle((w - sw) / 2, h - sh - 1, sw, sh));
+                int sh = Math.Max(6, (int)(_shadow.Height * scale));
+                DrawPlain(canvas, _shadow,
+                    new Rectangle((w - sw) / 2, footY - 1, sw, sh));
 
                 // 2. feet first, so the torso can cover the ankle cut.
                 // lift/dash are given in SOURCE pixels and scaled here, so the
@@ -279,11 +347,16 @@ namespace HajimiPet
                     sway + _tiltX + lean, w / 2f, h * 0.96f);
 
                 // 4. overlays
-                DrawBadge(canvas, w);
-                if (_bubbleLeft > 0) DrawBubble(canvas, w, catY);
-                if (_listOpen) DrawList(canvas, w, catY);
+                // 角标紧贴猫头顶
+                int badgeBottom = catY - BadgeGap;
+                int badgeTop = badgeBottom - BadgeH;
+                // 列表在角标上方，占据窗口新加出来的那块高度
+                int listH = CurrentListHeight();
+                int listTop = badgeTop - listH;
 
-                ApplyLayered(canvas, w, h);
+                DrawBadge(canvas, w, catY);
+                if (_bubbleLeft > 0) DrawBubble(canvas, w, catY);
+                if (_listOpen) DrawList(canvas, w, listTop);
             }
         }
 
@@ -341,52 +414,70 @@ namespace HajimiPet
 
         // ---------------- Badge ----------------
 
-        private void DrawBadge(Bitmap canvas, int w)
+        private void DrawBadge(Bitmap canvas, int w, int catY)
         {
             using (Graphics g = Graphics.FromImage(canvas))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 bool running = _activeCount > 0;
-                string text = _activeCount.ToString();
 
+                // 角标紧贴猫头顶：底边落在 catY - BadgeGap，不再固定在最顶部
+                int badgeBottom = Math.Max(BadgeH, catY - BadgeGap);
+                int badgeTop = badgeBottom - BadgeH;
+
+                if (!running)
+                {
+                    // 没有任务在跑：只留一个灰色小胶囊，不显示 0
+                    const int idleW = 22;
+                    int bh = BadgeH;
+                    int bx = (w - idleW) / 2;
+                    _badgeRect = new Rectangle(bx, badgeTop, idleW, bh);
+
+                    using (GraphicsPath path = RoundRect(_badgeRect, bh / 2))
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(232, 228, 220, 206)))
+                    using (Pen pen = new Pen(Color.FromArgb(200, 205, 192, 176), 1f))
+                    {
+                        g.FillPath(bg, path);
+                        g.DrawPath(pen, path);
+                    }
+                    using (SolidBrush dot = new SolidBrush(Color.FromArgb(190, 170, 150, 128)))
+                    {
+                        g.FillEllipse(dot, bx + idleW / 2 - 3, badgeTop + (bh - 6) / 2, 6, 6);
+                    }
+                    return;
+                }
+
+                string text = _activeCount.ToString();
                 using (Font font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Bold))
                 {
                     SizeF ts = g.MeasureString(text, font);
-                    int dot = running ? 6 : 0;
-                    int bw = Math.Max(26, (int)ts.Width + 16 + dot);
+                    int bw = Math.Max(26, (int)ts.Width + 16 + 6);
                     int bh = BadgeH;
                     int bx = (w - bw) / 2;
-                    _badgeRect = new Rectangle(bx, 0, bw, bh);
 
-                    Color fill = running
-                        ? Color.FromArgb(255, 59, 165, 95)
-                        : Color.FromArgb(248, 255, 240, 220);
-                    Color line = running
-                        ? Color.FromArgb(255, 59, 165, 95)
-                        : Color.FromArgb(220, 240, 176, 110);
+                    // 新任务出现时角标放大一点，作为即时反馈
+                    int pulse = _badgePulse > 0 ? Math.Min(3, _badgePulse / 2) : 0;
+                    _badgeRect = new Rectangle(bx - pulse, badgeTop - pulse,
+                        bw + pulse * 2, bh + pulse * 2);
 
-                    using (GraphicsPath path = RoundRect(_badgeRect, bh / 2))
-                    using (SolidBrush bg = new SolidBrush(fill))
-                    using (Pen pen = new Pen(line, 1f))
+                    using (GraphicsPath path = RoundRect(_badgeRect, _badgeRect.Height / 2))
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(255, 59, 165, 95)))
+                    using (Pen pen = new Pen(Color.FromArgb(255, 59, 165, 95), 1f))
                     {
                         g.FillPath(bg, path);
                         g.DrawPath(pen, path);
                     }
 
-                    int textX = bx + 8;
-                    if (running)
+                    // 脉动小圆点
+                    using (SolidBrush d = new SolidBrush(Color.FromArgb(255, 234, 255, 242)))
                     {
-                        using (SolidBrush d = new SolidBrush(Color.FromArgb(255, 234, 255, 242)))
-                        {
-                            g.FillEllipse(d, bx + 7, (bh - 6) / 2, 6, 6);
-                        }
-                        textX = bx + 17;
+                        g.FillEllipse(d, _badgeRect.X + 7, _badgeRect.Y + (_badgeRect.Height - 6) / 2, 6, 6);
                     }
 
-                    using (SolidBrush fg = new SolidBrush(
-                        running ? Color.White : Color.FromArgb(169, 99, 31)))
+                    using (SolidBrush fg = new SolidBrush(Color.White))
                     {
-                        g.DrawString(text, font, fg, textX, (bh - ts.Height) / 2f + 0.5f);
+                        g.DrawString(text, font, fg, _badgeRect.X + 17,
+                            _badgeRect.Y + (_badgeRect.Height - ts.Height) / 2f + 0.5f);
                     }
                 }
             }
@@ -433,56 +524,66 @@ namespace HajimiPet
 
         // ---------------- Session list ----------------
 
-        private void DrawList(Bitmap canvas, int w, int catY)
+        private void DrawList(Bitmap canvas, int w, int listTop)
         {
             using (Graphics g = Graphics.FromImage(canvas))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                const int rowH = 19;
-                int count = Math.Min(_active.Count, 8);
+                int count = Math.Min(_active.Count, ListMaxRows);
                 if (count == 0)
                 {
                     _rowRects = new Rectangle[0];
                     return;
                 }
 
-                int lw = Math.Min(w + 70, 210);
-                int lh = count * rowH + 9;
+                int lw = Math.Min(w - 8, ListWidth);
+                int lh = count * ListRowH + ListPadY;
                 int lx = (w - lw) / 2;
-                int ly = Math.Max(0, catY - lh - 3);
+                int ly = Math.Max(0, listTop);
                 _rowRects = new Rectangle[count];
 
-                using (GraphicsPath path = RoundRect(new Rectangle(lx, ly, lw, lh), 8))
-                using (SolidBrush bg = new SolidBrush(Color.FromArgb(250, 255, 253, 248)))
+                // 让列表底边正好落在 listTop + listH = 角标顶边，不留空隙
+                lh = Math.Max(ListRowH + ListPadY, Math.Min(lh, listTop + lh - ly));
+
+                using (GraphicsPath path = RoundRect(new Rectangle(lx, ly, lw, lh), 9))
+                using (SolidBrush bg = new SolidBrush(Color.FromArgb(252, 255, 253, 248)))
                 using (Pen pen = new Pen(Color.FromArgb(215, 240, 176, 110), 1f))
                 {
                     g.FillPath(bg, path);
                     g.DrawPath(pen, path);
                 }
 
-                using (Font font = new Font("Microsoft YaHei UI", 8f))
+                using (Font font = new Font("Microsoft YaHei UI", 8.5f))
                 {
                     for (int i = 0; i < count; i++)
                     {
                         SessionItem item = _active[i];
-                        int ry = ly + 4 + i * rowH;
-                        _rowRects[i] = new Rectangle(lx + 3, ry, lw - 6, rowH);
+                        int ry = ly + 6 + i * ListRowH;
+                        _rowRects[i] = new Rectangle(lx + 3, ry, lw - 6, ListRowH);
 
                         using (SolidBrush dot = new SolidBrush(Color.FromArgb(59, 165, 95)))
                         {
-                            g.FillEllipse(dot, lx + 8, ry + 6, 6, 6);
+                            g.FillEllipse(dot, lx + 9, ry + 7, 6, 6);
                         }
-                        string title = item.Title.Length > 14
-                            ? item.Title.Substring(0, 14) + "…"
-                            : item.Title;
+
+                        string ago = item.Ago;
+                        SizeF agoSize = g.MeasureString(ago, font);
+                        int titleRight = lx + lw - (int)agoSize.Width - 10;
+                        int titleMax = Math.Max(40, titleRight - (lx + 21));
+                        string title = item.Title;
+                        while (title.Length > 1 && g.MeasureString(title, font).Width > titleMax)
+                        {
+                            title = title.Substring(0, title.Length - 1);
+                        }
+                        if (title.Length < item.Title.Length) title = title.TrimEnd() + "…";
+
                         using (SolidBrush ink = new SolidBrush(Color.FromArgb(63, 52, 40)))
                         {
-                            g.DrawString(title, font, ink, lx + 19, ry + 1);
+                            g.DrawString(title, font, ink, lx + 21, ry + 2);
                         }
-                        using (SolidBrush ago = new SolidBrush(Color.FromArgb(176, 154, 132)))
+                        using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(176, 154, 132)))
                         {
-                            SizeF s = g.MeasureString(item.Ago, font);
-                            g.DrawString(item.Ago, font, ago, lx + lw - (int)s.Width - 7, ry + 1);
+                            g.DrawString(ago, font, agoBrush, lx + lw - (int)agoSize.Width - 8, ry + 2);
                         }
                     }
                 }
@@ -566,10 +667,11 @@ namespace HajimiPet
                 {
                     if (_rowRects[i].Contains(e.Location))
                     {
-                        _listOpen = false;
-                        if (SessionRequested != null && i < _active.Count)
+                        SessionItem picked = (i < _active.Count) ? _active[i] : null;
+                        CloseList();
+                        if (SessionRequested != null && picked != null)
                         {
-                            SessionRequested(_active[i]);
+                            SessionRequested(picked);
                         }
                         return;
                     }
@@ -604,17 +706,38 @@ namespace HajimiPet
 
         public void ToggleList()
         {
-            _listOpen = !_listOpen;
-            if (_listOpen)
+            if (_listOpen) { CloseList(); return; }
+
+            // 先刷新数据，确认真的有任务在跑，再按行数撑开窗口
+            Poll();
+            if (_activeCount == 0)
             {
-                Poll();
-                if (_activeCount == 0) Say("没有任务在跑。");
+                Say("没有任务在跑。");
+                return;
             }
+
+            int bottom = Top + Height;   // 保持窗口底边不动，向上长高
+            _listOpen = true;
+            ApplyLayout();
+            Top = bottom - Height;
+            ClampToScreen();
         }
 
         public void RefreshSessions()
         {
             Poll();
+        }
+
+        /// <summary>收起列表并恢复窗口尺寸（底边保持不动）。</summary>
+        public void CloseList()
+        {
+            if (!_listOpen) return;
+            int bottom = Top + Height;
+            _listOpen = false;
+            _rowRects = new Rectangle[0];
+            ApplyLayout();
+            Top = bottom - Height;
+            ClampToScreen();
         }
 
         private void ClampToScreen()
@@ -634,9 +757,63 @@ namespace HajimiPet
         private void Poll()
         {
             List<SessionItem> items = SessionScanner.ReadActive();
+
+            if (DebugActiveOverride.HasValue)
+            {
+                int want = DebugActiveOverride.Value;
+                items.Clear();
+                for (int i = 0; i < want; i++)
+                {
+                    items.Add(new SessionItem
+                    {
+                        Id = "debug-" + i,
+                        Title = "调试会话 " + (i + 1),
+                        Active = true,
+                        Turn = 1,
+                        Updated = DateTime.Now.AddMinutes(-i * 3),
+                        Ago = i == 0 ? "刚刚" : (i * 3) + " 分前",
+                    });
+                }
+            }
+
+            // 只有内容真的变了才更新，避免无意义的重绘与列表抖动
+            bool changed = items.Count != _activeCount;
+            if (!changed)
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    if (!string.Equals(items[i].Id, _active[i].Id, StringComparison.Ordinal))
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
             _active.Clear();
             _active.AddRange(items);
             _activeCount = items.Count;
+
+            if (changed)
+            {
+                // 新任务出现时让角标跳一下，用户能立刻看到
+                if (_activeCount > _lastNotified)
+                {
+                    _badgePulse = 8;
+                }
+                _lastNotified = _activeCount;
+
+                // 列表正展开时，行数变了就要同步调整窗口高度
+                if (_listOpen)
+                {
+                    int bottom = Top + Height;
+                    ApplyLayout();
+                    Top = bottom - Height;
+                }
+
+                Action<int> handler = ActiveCountChanged;
+                if (handler != null) handler(_activeCount);
+            }
         }
 
         public int ActiveCount { get { return _activeCount; } }
