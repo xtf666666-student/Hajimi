@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -55,6 +57,8 @@ namespace HajimiPet
             _pet.DebugActiveOverride = activeOverride;
             _pet.OpenDshRequested += OpenDsh;
             _pet.SessionRequested += OnSessionRequested;
+            _pet.ReplyRequested += OnReplyRequested;
+            _pet.StopRequested += OnStopRequested;
             // 进行中对话数变化时，托盘统计跟着刷新
             _pet.ActiveCountChanged += count => RefreshTray();
 
@@ -72,6 +76,9 @@ namespace HajimiPet
                 _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy3.png"), false, 3);
                 _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy3-list.png"), true, 3);
                 _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy1-list.png"), true, 1);
+                _pet.DumpFrameWithBubble(
+                    System.IO.Path.Combine(dumpDir, "bubble.png"),
+                    2, "本哈基米正在盯着那个任务跑，别催。");
                 Console.Out.Write("dump done -> " + dumpDir);
                 return;
             }
@@ -180,6 +187,94 @@ namespace HajimiPet
                 _pet.Say("复制失败");
             }
             OpenDsh();
+        }
+
+        /// <summary>
+        /// 「回复」：把标题放进剪贴板 → 唤出 DSH → Ctrl+K 搜索 → 粘贴 → 回车。
+        /// 这样会真的跳到那个对话，光标停在输入区，用户直接打字即可。
+        /// DSH 没有对外的发送接口，最后一步"发出"必须由用户按下回车。
+        /// </summary>
+        private static void OnReplyRequested(SessionItem item)
+        {
+            try
+            {
+                Clipboard.SetText(item.Title);
+            }
+            catch
+            {
+                _pet.Say("复制失败");
+                return;
+            }
+
+            OpenDsh();
+            JumpToSessionInDsh(item.Title);
+            _pet.Say("已跳到该对话，直接输入");
+        }
+
+        /// <summary>
+        /// 「停止」：同样先跳到那个对话，然后由用户点停止。
+        /// DSH 未开放 cancel 接口，桌宠不伪造"已停止"。
+        /// </summary>
+        private static void OnStopRequested(SessionItem item)
+        {
+            try
+            {
+                Clipboard.SetText(item.Title);
+            }
+            catch
+            {
+                _pet.Say("复制失败");
+                return;
+            }
+
+            OpenDsh();
+            JumpToSessionInDsh(item.Title);
+            _pet.Say("已定位，点 DSH 里的停止");
+        }
+
+        /// <summary>用 DSH 的 Ctrl+K 搜索把目标会话选中。</summary>
+        private static void JumpToSessionInDsh(string title)
+        {
+            try
+            {
+                // 等 DSH 窗口真正激活后再发按键，否则按键会打到别处
+                for (int i = 0; i < 30; i++)
+                {
+                    Thread.Sleep(100);
+                    if (IsDshForeground()) break;
+                }
+                if (!IsDshForeground()) return;
+
+                Thread.Sleep(120);
+                SendKeys.SendWait("^k");
+                Thread.Sleep(260);
+                SendKeys.SendWait("^v");
+                Thread.Sleep(420);
+                SendKeys.SendWait("{ENTER}");
+                Thread.Sleep(120);
+                // 清掉搜索框里的残留，让输入焦点回到对话
+                SendKeys.SendWait("{ESC}");
+            }
+            catch
+            {
+                /* 按键失败不影响已复制的标题 */
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder text, int count);
+
+        private static bool IsDshForeground()
+        {
+            IntPtr h = GetForegroundWindow();
+            if (h == IntPtr.Zero) return false;
+            var sb = new StringBuilder(256);
+            GetWindowTextW(h, sb, sb.Capacity);
+            string t = sb.ToString();
+            return t.IndexOf("DeepSeek", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }
