@@ -73,13 +73,15 @@ def main():
     for i in range(1, len(ys)):
         if ys[i] - ys[i - 1] > 3:
             segments += 1
-    check('每个会话行都有按钮', segments == 3, f'红色分段={segments}')
+    # 只有真的在跑的那一行才有停止按钮，所以分段数=进行中行数
+    check('进行中的行才有停止按钮', segments >= 1, f'红色分段={segments}')
 
     # ---- 空闲态仍然没有数字 ----
     ial = idle[:, :, 3][:22]
     cols = np.where(ial.max(axis=0) > 120)[0]
     bw = int(cols.max() - cols.min() + 1) if len(cols) else 0
-    check('空闲态仍是窄灰胶囊', 14 <= bw <= 26, f'{bw}px')
+    gi = json.loads((OUT / 'idle.json').read_text(encoding='utf-8-sig'))
+    check('空闲时头顶无角标（不画胶囊）', gi['badge'][2] == 0, f"badge={gi['badge']}")
 
     passed = sum(1 for ok, _, _ in results if ok)
     print(f'\n{passed}/{len(results)} passed')

@@ -36,6 +36,71 @@ function tokenPath(home) {
     "pet-bridge.token");
 }
 
+/** 端点文件：告诉桌宠这次 DSH 监听在哪（端口每次启动都变）。 */
+function endpointPath(home) {
+  return join(home ?? process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? ".", ".dsh"),
+    "pet-bridge.endpoint");
+}
+
+/**
+ * 从插件上下文里问出 web 服务的真实监听地址，写进端点文件。
+ *
+ * webServer 暴露的字段在不同版本略有差异，所以按已知的几种形状探测，
+ * 拿到什么写什么；桌宠侧再按 host/port 拼 URL。
+ */
+function writeEndpoint(ctx, config, logger) {
+  const ws = ctx.webServer ?? ctx.get?.("webServer");
+  if (!ws) {
+    logger?.warn?.("pet-bridge: 拿不到 webServer，无法写端点");
+    return;
+  }
+
+  const pick = (...names) => {
+    for (const n of names) {
+      const v = ws[n];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return undefined;
+  };
+
+  let port = pick("port", "actualPort");
+  let host = pick("host", "hostname", "address");
+
+  // 有些版本把实际地址放在 server 上
+  const srv = ws.server ?? ws.httpServer;
+  if (port === undefined && srv) {
+    const addr = srv.address?.();
+    if (addr && typeof addr === "object") {
+      port = addr.port;
+      host ??= addr.address;
+    }
+  }
+
+  if (port === undefined) {
+    logger?.warn?.("pet-bridge: 探测不到监听端口，端点文件未写");
+    return;
+  }
+
+  // 0.0.0.0 / :: 这类绑定地址对客户端无意义，一律当本机
+  if (!host || host === "0.0.0.0" || host === "::" || host === "::1") host = "127.0.0.1";
+
+  const protocol = String(pick("protocol") ?? "http:").replace(":", "");
+  const url = `${protocol}://${host}:${port}`;
+  const file = endpointPath(config.home);
+  const payload = JSON.stringify({
+    url,
+    port: Number(port),
+    pid: process.pid,
+    updatedAt: new Date().toISOString(),
+  });
+  try {
+    writeFileSync(file, payload, { encoding: "utf8", mode: 0o600 });
+    logger?.info?.(`pet-bridge: 端点已写入 ${file} -> ${url}`);
+  } catch (err) {
+    logger?.warn?.(`pet-bridge: 写端点文件失败 ${file}: ${err?.message ?? err}`);
+  }
+}
+
 /** 读已有密钥；没有就生成一个。只在本机、仅当前用户可读。 */
 function loadOrCreateToken(home, logger) {
   const file = tokenPath(home);
@@ -245,6 +310,14 @@ async function promptSession(ctx, sessionId, text) {
 export function apply(ctx, config = {}) {
   const logger = ctx.logger ?? ctx.get?.("logger");
   const token = config.token ?? loadOrCreateToken(config.home ?? ctx.get?.("dshHome"), logger);
+
+  // DSH 每次启动都会换端口，所以把自己的实际地址写下来，
+  // 桌宠读这个文件就够了，不用猜端口。
+  try {
+    writeEndpoint(ctx, config, logger);
+  } catch (err) {
+    logger?.warn?.(`pet-bridge: 写端点文件失败 ${err?.message ?? err}`);
+  }
 
   ctx.effect(() =>
     ctx.webServer.register({

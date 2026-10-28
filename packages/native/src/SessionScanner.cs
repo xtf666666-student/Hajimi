@@ -10,20 +10,29 @@ namespace HajimiPet
     {
         public string Id;
         public string Title;
+        /// <summary>这一轮是否还在跑。</summary>
         public bool Active;
+        /// <summary>刚跑完、还没被用户看过（角标要保留它）。</summary>
+        public bool Unread;
         public int Turn;
         public DateTime Updated;
         public string Ago;
 
+        /// <summary>角标要统计的数量：跑着的 + 跑完未看的。</summary>
+        public bool Counts { get { return Active || Unread; } }
+
         public override string ToString()
         {
-            return (Active ? "* " : "  ") + Title + " (" + Ago + ")";
+            return (Active ? "* " : (Unread ? "+ " : "  ")) + Title + " (" + Ago + ")";
         }
     }
 
     /// <summary>
-    /// 读取 DSH 的会话缓存，判断哪些会话正在运行。
+    /// 读取 DSH 的会话缓存，判断哪些会话正在运行 / 刚跑完未查看。
     /// 只读，不写，不联网；解析失败的单条直接跳过。
+    ///
+    /// 「跑完未看」的判定：这一轮的完成时刻比我们记录的上次查看时刻更晚。
+    /// 状态存在 $DSH_HOME/hajimi-pet-seen.json，桌宠自己维护，不碰 DSH 数据。
     /// </summary>
     internal static class SessionScanner
     {
@@ -47,7 +56,7 @@ namespace HajimiPet
             "\"cwd\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
             RegexOptions.Singleline | RegexOptions.Compiled);
 
-        public static string CacheDir
+        public static string DshHome
         {
             get
             {
@@ -57,12 +66,109 @@ namespace HajimiPet
                     home = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh");
                 }
-                return Path.Combine(home, "storages", "session_projcache", "sessions");
+                return home;
             }
+        }
+
+        public static string CacheDir
+        {
+            get { return Path.Combine(DshHome, "storages", "session_projcache", "sessions"); }
+        }
+
+        /// <summary>桌宠自己维护的「已查看 / 已关闭」记录。</summary>
+        private static string SeenFile
+        {
+            get { return Path.Combine(DshHome, "hajimi-pet-seen.json"); }
+        }
+
+        /// <summary>sessionId -> 已确认的更新时间（用来判断是否出现过新的完成）。</summary>
+        private static Dictionary<string, DateTime> _seen =
+            new Dictionary<string, DateTime>(StringComparer.Ordinal);
+
+        /// <summary>sessionId -> 完成时刻（首次发现它「已完成」时记下，避免列表抖动）。</summary>
+        private static Dictionary<string, DateTime> _finishedAt =
+            new Dictionary<string, DateTime>(StringComparer.Ordinal);
+
+        /// <summary>用户主动叉掉的会话，永久不再提示（直到它再次开始运行）。</summary>
+        private static HashSet<string> _dismissed = new HashSet<string>(StringComparer.Ordinal);
+
+        private static bool _loaded;
+
+        public static void Load()
+        {
+            if (_loaded) return;
+            _loaded = true;
+            try
+            {
+                if (!File.Exists(SeenFile)) return;
+                string json = File.ReadAllText(SeenFile, Encoding.UTF8);
+                foreach (Match m in Regex.Matches(json,
+                    "\"id\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"seen\"\\s*:\\s*\"([^\"]*)\""))
+                {
+                    DateTime t;
+                    if (DateTime.TryParse(m.Groups[2].Value, out t))
+                    {
+                        _seen[m.Groups[1].Value] = t;
+                    }
+                }
+            }
+            catch
+            {
+                /* 记录坏了就当作没记录 */
+            }
+        }
+
+        public static void Save()
+        {
+            try
+            {
+                var sb = new StringBuilder("{\"items\":[");
+                bool first = true;
+                foreach (KeyValuePair<string, DateTime> kv in _seen)
+                {
+                    if (!first) sb.Append(',');
+                    first = false;
+                    sb.Append("{\"id\":\"").Append(Escape(kv.Key))
+                      .Append("\",\"seen\":\"").Append(kv.Value.ToString("o")).Append("\"}");
+                }
+                sb.Append("]}");
+                Directory.CreateDirectory(Path.GetDirectoryName(SeenFile));
+                File.WriteAllText(SeenFile, sb.ToString(), Encoding.UTF8);
+            }
+            catch
+            {
+                /* 写不进去不影响功能 */
+            }
+        }
+
+        private static string Escape(string s)
+        {
+            return s == null ? "" : s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        /// <summary>用户点开/关闭某会话：标记已读，角标数字随之下降。</summary>
+        public static void MarkSeen(string sessionId)
+        {
+            if (string.IsNullOrEmpty(sessionId)) return;
+            _seen[sessionId] = DateTime.UtcNow;
+            _dismissed.Remove(sessionId);
+            _finishedAt.Remove(sessionId);
+            Save();
+        }
+
+        /// <summary>用户点叉：直接移出列表，直到它再次开始运行。</summary>
+        public static void Dismiss(string sessionId)
+        {
+            if (string.IsNullOrEmpty(sessionId)) return;
+            _dismissed.Add(sessionId);
+            _seen[sessionId] = DateTime.UtcNow;
+            _finishedAt.Remove(sessionId);
+            Save();
         }
 
         public static List<SessionItem> Read()
         {
+            Load();
             List<SessionItem> result = new List<SessionItem>();
             string dir = CacheDir;
             if (!Directory.Exists(dir))
@@ -80,36 +186,80 @@ namespace HajimiPet
                 return result;
             }
 
+            DateTime now = DateTime.UtcNow;
+
             foreach (string file in files)
             {
                 SessionItem item = ReadOne(file);
                 if (item != null)
                 {
+                    string id = item.Id;
+
+                    if (item.Active)
+                    {
+                        // 又跑起来了：之前的「已完成」状态作废，叉掉也复活
+                        _finishedAt.Remove(id);
+                        _dismissed.Remove(id);
+                        item.Unread = false;
+                    }
+                    else
+                    {
+                        if (_dismissed.Contains(id))
+                        {
+                            // 用户已经主动关掉，不再提示
+                            item.Unread = false;
+                        }
+                        else
+                        {
+                            // 记下它第一次被观察到「已完成」的时刻
+                            if (!_finishedAt.ContainsKey(id))
+                            {
+                                _finishedAt[id] = now;
+                            }
+                            DateTime seenAt;
+                            if (!_seen.TryGetValue(id, out seenAt))
+                            {
+                                // 第一次见到这个会话：如果它很久以前就完成了，不打扰
+                                if (item.Updated != DateTime.MinValue &&
+                                    (DateTime.Now - item.Updated).TotalMinutes > 10)
+                                {
+                                    _seen[id] = now;
+                                    seenAt = now;
+                                }
+                                else
+                                {
+                                    seenAt = DateTime.MinValue;
+                                }
+                            }
+                            item.Unread = item.Updated > seenAt;
+                        }
+                    }
+
                     result.Add(item);
                 }
             }
 
-            // 跑着的排前面，然后按更新时间倒序
+            // 跑着的排最前，然后是跑完未看的，最后是其余的；同组按时间倒序
             result.Sort((a, b) =>
             {
-                if (a.Active != b.Active) return a.Active ? -1 : 1;
+                int ga = a.Active ? 0 : (a.Unread ? 1 : 2);
+                int gb = b.Active ? 0 : (b.Unread ? 1 : 2);
+                if (ga != gb) return ga.CompareTo(gb);
                 return b.Updated.CompareTo(a.Updated);
             });
             return result;
         }
 
+        /// <summary>角标要显示的列表：跑着的 + 跑完未看的。</summary>
         public static List<SessionItem> ReadActive()
         {
             List<SessionItem> all = Read();
-            List<SessionItem> active = new List<SessionItem>();
+            List<SessionItem> show = new List<SessionItem>();
             foreach (SessionItem item in all)
             {
-                if (item.Active)
-                {
-                    active.Add(item);
-                }
+                if (item.Counts) show.Add(item);
             }
-            return active;
+            return show;
         }
 
         private static SessionItem ReadOne(string file)
@@ -153,6 +303,7 @@ namespace HajimiPet
                     Id = Path.GetFileNameWithoutExtension(file),
                     Title = Decode(title),
                     Active = active,
+                    Unread = false,
                     Turn = turn,
                     Updated = updated,
                     Ago = Relative(updated),

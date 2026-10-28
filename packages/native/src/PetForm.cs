@@ -107,9 +107,14 @@ namespace HajimiPet
         private Rectangle _badgeRect;
         private Rectangle _lastBubbleRect;
         private Rectangle _lastListRect;
+        private Rectangle _lastShadowRect;
+        private Rectangle _lastCatRect;
         private Rectangle[] _rowRects = new Rectangle[0];
         private Rectangle[] _btnReply = new Rectangle[0];
         private Rectangle[] _btnStop = new Rectangle[0];
+        private Rectangle[] _btnClose = new Rectangle[0];
+
+        private enum IconKind { Reply, Stop, Close }
 
         // 会话行右侧的图标按钮尺寸
         private const int BtnSize = 15;
@@ -135,9 +140,10 @@ namespace HajimiPet
         /// </summary>
         public void DumpFrame(string path, bool listOpen, int activeOverride)
         {
-            _listOpen = listOpen;
             DebugActiveOverride = activeOverride;
             Poll();
+            _listOpen = listOpen;
+            // Poll 之后才知道有多少行，必须重新按行数布局
             ApplyLayout();
             Render();
 
@@ -148,6 +154,23 @@ namespace HajimiPet
                 DrawScene(canvas, w, h);
                 canvas.Save(path, ImageFormat.Png);
             }
+            Console.Out.Write($"[dump] {System.IO.Path.GetFileName(path)} {w}x{h} rows={_active.Count} listOpen={_listOpen} | ");
+
+            // 每个帧都写自己的几何，供自检按真实矩形判断
+            string json = "{" +
+                "\"window\":[" + w + "," + h + "]," +
+                "\"badge\":[" + _badgeRect.X + "," + _badgeRect.Y + "," +
+                    _badgeRect.Width + "," + _badgeRect.Height + "]," +
+                "\"shadow\":[" + _lastShadowRect.X + "," + _lastShadowRect.Y + "," +
+                    _lastShadowRect.Width + "," + _lastShadowRect.Height + "]," +
+                "\"cat\":[" + _lastCatRect.X + "," + _lastCatRect.Y + "," +
+                    _lastCatRect.Width + "," + _lastCatRect.Height + "]," +
+                "\"list\":[" + _lastListRect.X + "," + _lastListRect.Y + "," +
+                    _lastListRect.Width + "," + _lastListRect.Height + "]," +
+                "\"rows\":[" + _rowRects.Length + "]" +
+                "}";
+            System.IO.File.WriteAllText(
+                System.IO.Path.ChangeExtension(path, ".json"), json);
         }
 
         /// <summary>自检用：导出一帧带侧边气泡的画面，并写出各区域的真实矩形。</summary>
@@ -177,6 +200,10 @@ namespace HajimiPet
                     _lastBubbleRect.Width + "," + _lastBubbleRect.Height + "]," +
                 "\"list\":[" + _lastListRect.X + "," + _lastListRect.Y + "," +
                     _lastListRect.Width + "," + _lastListRect.Height + "]," +
+                "\"shadow\":[" + _lastShadowRect.X + "," + _lastShadowRect.Y + "," +
+                    _lastShadowRect.Width + "," + _lastShadowRect.Height + "]," +
+                "\"cat\":[" + _lastCatRect.X + "," + _lastCatRect.Y + "," +
+                    _lastCatRect.Width + "," + _lastCatRect.Height + "]," +
                 "\"rows\":[" + _rowRects.Length + "]" +
                 "}";
             System.IO.File.WriteAllText(
@@ -248,8 +275,9 @@ namespace HajimiPet
             int w = baseW;
             if (bubbleSide > 0) w = baseW + bubbleSide;
             if (listH > 0) w = Math.Max(w, ListWidth + 10);
-            // 底部区域：角标 + 猫 + 阴影（固定的"主体高度"）
-            int bodyH = BadgeH + BadgeGap + catH + shadowH;
+            // 顶部区域：有角标时才占位，没有任务时头顶留干净
+            int badgeH = _activeCount > 0 ? BadgeH + BadgeGap : 0;
+            int bodyH = badgeH + catH + shadowH;
             // 列表展开时，在主体上方额外加上列表高度
             int h = bodyH + listH;
             ClientSize = new Size(w, h);
@@ -399,11 +427,14 @@ namespace HajimiPet
                 float sway = (float)Math.Sin(_phase * (sprinting ? 1.4f : 0.55f)) *
                              (sprinting ? 2.2f : 1.6f);
 
-                // 1. 地面阴影：顶端对齐脚底线，向下铺开，紧贴脚底不留缝
+                // 1. 地面阴影：必须跟着猫走，所以用猫的中心而不是窗口中心
                 int sw = (int)(_shadow.Width * scale * (1f + 0.06f * Math.Abs(dash)));
                 int sh = Math.Max(6, (int)(_shadow.Height * scale));
+                int shadowX = catX + (catW - sw) / 2;
+                _lastShadowRect = new Rectangle(shadowX, footY - 1, sw, sh);
+                _lastCatRect = new Rectangle(catX, catY, catW, catH);
                 DrawPlain(canvas, _shadow,
-                    new Rectangle((w - sw) / 2, footY - 1, sw, sh));
+                    new Rectangle(shadowX, footY - 1, sw, sh));
 
                 // 2. feet first, so the torso can cover the ankle cut.
                 // lift/dash are given in SOURCE pixels and scaled here, so the
@@ -495,29 +526,14 @@ namespace HajimiPet
                 bool running = _activeCount > 0;
 
                 // 角标紧贴猫头顶，并且横向对齐猫的中心（不是窗口中心）
-                int badgeBottom = Math.Max(BadgeH, catY - BadgeGap);
-                int badgeTop = badgeBottom - BadgeH;
+                int badgeTop = Math.Max(0, catY - BadgeGap - BadgeH);
                 int catCenterX = catX + catW / 2;
 
                 if (!running)
                 {
-                    // 没有任务在跑：只留一个灰色小胶囊，不显示 0
-                    const int idleW = 22;
-                    int bh = BadgeH;
-                    int bx = catCenterX - idleW / 2;
-                    _badgeRect = new Rectangle(bx, badgeTop, idleW, bh);
-
-                    using (GraphicsPath path = RoundRect(_badgeRect, bh / 2))
-                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(232, 228, 220, 206)))
-                    using (Pen pen = new Pen(Color.FromArgb(200, 205, 192, 176), 1f))
-                    {
-                        g.FillPath(bg, path);
-                        g.DrawPath(pen, path);
-                    }
-                    using (SolidBrush dot = new SolidBrush(Color.FromArgb(190, 170, 150, 128)))
-                    {
-                        g.FillEllipse(dot, bx + idleW / 2 - 3, badgeTop + (bh - 6) / 2, 6, 6);
-                    }
+                    // 没有任务在跑：什么都不画。
+                    // 之前这里留了个灰胶囊和小圆点，用户明确不要 —— 头上保持干净。
+                    _badgeRect = Rectangle.Empty;
                     return;
                 }
 
@@ -653,43 +669,58 @@ namespace HajimiPet
         }
 
         /// <summary>会话行右侧的小图标按钮：↩ 回复 / ■ 停止。</summary>
-        private static void DrawIconButton(Graphics g, Rectangle r, bool isStop)
+        private static void DrawIconButton(Graphics g, Rectangle r, IconKind kind, bool enabled)
         {
             SmoothingMode prev = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            using (SolidBrush bg = new SolidBrush(Color.FromArgb(246, 241, 233, 220)))
-            using (Pen border = new Pen(Color.FromArgb(190, 222, 205, 182), 1f))
+            int alpha = enabled ? 255 : 110;
+            using (SolidBrush bg = new SolidBrush(Color.FromArgb(enabled ? 246 : 236, 241, 233, 220)))
+            using (Pen border = new Pen(Color.FromArgb(enabled ? 190 : 110, 222, 205, 182), 1f))
             {
                 g.FillEllipse(bg, r);
                 g.DrawEllipse(border, r);
             }
 
-            if (isStop)
+            switch (kind)
             {
-                // 实心方块 = 停止
-                int s = Math.Max(5, r.Width - 9);
-                int x = r.X + (r.Width - s) / 2;
-                int y = r.Y + (r.Height - s) / 2;
-                using (SolidBrush fg = new SolidBrush(Color.FromArgb(205, 90, 74)))
-                {
-                    g.FillRectangle(fg, new Rectangle(x, y, s, s));
-                }
-            }
-            else
-            {
-                // 折返箭头 = 回复
-                using (Pen fg = new Pen(Color.FromArgb(90, 130, 100), 1.4f))
-                {
-                    int left = r.X + 4;
-                    int right = r.Right - 4;
-                    int midY = r.Y + r.Height / 2 + 1;
-                    int topY = r.Y + 5;
-                    g.DrawLine(fg, right, midY, left, midY);
-                    g.DrawLine(fg, left, midY, left + 3, midY - 3);
-                    g.DrawLine(fg, left, midY, left + 3, midY + 3);
-                    g.DrawLine(fg, right, midY, right, topY);
-                }
+                case IconKind.Stop:
+                    {
+                        int s = Math.Max(5, r.Width - 9);
+                        int x = r.X + (r.Width - s) / 2;
+                        int y = r.Y + (r.Height - s) / 2;
+                        using (SolidBrush fg = new SolidBrush(Color.FromArgb(alpha, 205, 90, 74)))
+                        {
+                            g.FillRectangle(fg, new Rectangle(x, y, s, s));
+                        }
+                        break;
+                    }
+                case IconKind.Close:
+                    {
+                        using (Pen fg = new Pen(Color.FromArgb(alpha, 150, 132, 112), 1.4f))
+                        {
+                            int pad = 5;
+                            g.DrawLine(fg, r.X + pad, r.Y + pad, r.Right - pad, r.Bottom - pad);
+                            g.DrawLine(fg, r.Right - pad, r.Y + pad, r.X + pad, r.Bottom - pad);
+                        }
+                        break;
+                    }
+                default:
+                    {
+                        // 折返箭头 = 回复
+                        using (Pen fg = new Pen(Color.FromArgb(alpha, 90, 130, 100), 1.4f))
+                        {
+                            int left = r.X + 4;
+                            int right = r.Right - 4;
+                            int midY = r.Y + r.Height / 2 + 1;
+                            int topY = r.Y + 5;
+                            g.DrawLine(fg, right, midY, left, midY);
+                            g.DrawLine(fg, left, midY, left + 3, midY - 3);
+                            g.DrawLine(fg, left, midY, left + 3, midY + 3);
+                            g.DrawLine(fg, right, midY, right, topY);
+                        }
+                        break;
+                    }
             }
 
             g.SmoothingMode = prev;
@@ -712,12 +743,12 @@ namespace HajimiPet
                 _rowRects = new Rectangle[count];
                 _btnReply = new Rectangle[count];
                 _btnStop = new Rectangle[count];
+                _btnClose = new Rectangle[count];
 
                 int lw = Math.Min(w - 8, ListWidth);
                 int lh = count * ListRowH + ListPadY;
                 int lx = (w - lw) / 2;
                 int ly = Math.Max(0, listTop);
-                _rowRects = new Rectangle[count];
 
                 // 让列表底边正好落在 listTop + listH = 角标顶边，不留空隙
                 lh = Math.Max(ListRowH + ListPadY, Math.Min(lh, listTop + lh - ly));
@@ -740,22 +771,53 @@ namespace HajimiPet
                         _rowRects[i] = new Rectangle(lx + 3, ry, lw - 6, ListRowH);
                         _btnReply[i] = default(Rectangle);
                         _btnStop[i] = default(Rectangle);
+                        _btnClose[i] = default(Rectangle);
 
-                        using (SolidBrush dot = new SolidBrush(Color.FromArgb(59, 165, 95)))
+                        // 状态点：跑着=脉动绿点，跑完未看=琥珀点，看过=空心灰点
+                        int dotX = lx + 9;
+                        int dotY = ry + 7;
+                        if (item.Active)
                         {
-                            g.FillEllipse(dot, lx + 9, ry + 7, 6, 6);
+                            // 外圈光晕表示在跑
+                            using (SolidBrush halo = new SolidBrush(Color.FromArgb(70, 59, 165, 95)))
+                            {
+                                g.FillEllipse(halo, dotX - 2, dotY - 2, 10, 10);
+                            }
+                            using (SolidBrush dot = new SolidBrush(Color.FromArgb(59, 165, 95)))
+                            {
+                                g.FillEllipse(dot, dotX, dotY, 6, 6);
+                            }
+                        }
+                        else if (item.Unread)
+                        {
+                            using (SolidBrush dot = new SolidBrush(Color.FromArgb(230, 156, 62)))
+                            {
+                                g.FillEllipse(dot, dotX, dotY, 6, 6);
+                            }
+                        }
+                        else
+                        {
+                            using (Pen ring = new Pen(Color.FromArgb(190, 180, 168), 1.2f))
+                            {
+                                g.DrawEllipse(ring, dotX, dotY, 5, 5);
+                            }
                         }
 
-                        // 右侧两个图标按钮：回复 ↩ / 停止 ■
+                        // 右侧三个图标按钮：回复 ↩ / 停止 ■ / 叉掉 ×
                         int btnY = ry + 2;
-                        int stopX = lx + lw - 8 - BtnSize;
+                        int closeX = lx + lw - 8 - BtnSize;
+                        int stopX = closeX - 4 - BtnSize;
                         int replyX = stopX - 4 - BtnSize;
+                        _btnClose[i] = new Rectangle(closeX, btnY, BtnSize, BtnSize);
                         _btnStop[i] = new Rectangle(stopX, btnY, BtnSize, BtnSize);
                         _btnReply[i] = new Rectangle(replyX, btnY, BtnSize, BtnSize);
-                        DrawIconButton(g, _btnReply[i], false);
-                        DrawIconButton(g, _btnStop[i], true);
 
-                        // 标题可用宽度：右边只让出两个按钮的位置
+                        // 停止只在真的在跑时才有意义，否则画成禁用态
+                        DrawIconButton(g, _btnReply[i], IconKind.Reply, item.Active || item.Unread);
+                        DrawIconButton(g, _btnStop[i], IconKind.Stop, item.Active);
+                        DrawIconButton(g, _btnClose[i], IconKind.Close, true);
+
+                        // 标题可用宽度：右边让出三个按钮
                         string ago = item.Ago;
                         SizeF agoSize = g.MeasureString(ago, font);
                         int titleRight = replyX - 6;
@@ -767,11 +829,13 @@ namespace HajimiPet
                         }
                         if (title.Length < item.Title.Length) title = title.TrimEnd() + "…";
 
-                        using (SolidBrush ink = new SolidBrush(Color.FromArgb(63, 52, 40)))
+                        // 已完成且看过的行弱化，避免和进行中的抢注意力
+                        int ink = item.Active || item.Unread ? 63 : 150;
+                        using (SolidBrush inkBrush = new SolidBrush(Color.FromArgb(ink, 52, 40)))
                         {
-                            g.DrawString(title, font, ink, lx + 21, ry + 2);
+                            g.DrawString(title, font, inkBrush, lx + 21, ry + 2);
                         }
-                        // 相对时间紧跟标题右侧（在按钮左边），淡色小字
+
                         using (Font small = new Font("Microsoft YaHei UI", 7.5f))
                         using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(178, 158, 138)))
                         {
@@ -863,16 +927,34 @@ namespace HajimiPet
                 // 先判按钮，再判整行：按钮在行内，必须优先命中
                 for (int i = 0; i < _btnReply.Length; i++)
                 {
-                    if (_btnReply[i].Contains(e.Location))
+                    SessionItem item = (i < _active.Count) ? _active[i] : null;
+                    if (item == null) continue;
+
+                    if (_btnClose[i].Contains(e.Location))
                     {
-                        SessionItem item = (i < _active.Count) ? _active[i] : null;
-                        if (item != null && ReplyRequested != null) ReplyRequested(item);
+                        // 叉掉：从列表移除，角标随之下降
+                        SessionScanner.Dismiss(item.Id);
+                        CloseList();
+                        Poll();
+                        ApplyLayout();
+                        Say("已移除");
                         return;
                     }
                     if (_btnStop[i].Contains(e.Location))
                     {
-                        SessionItem item = (i < _active.Count) ? _active[i] : null;
-                        if (item != null && StopRequested != null) StopRequested(item);
+                        if (!item.Active)
+                        {
+                            Say("该任务已经结束");
+                            return;
+                        }
+                        if (StopRequested != null) StopRequested(item);
+                        return;
+                    }
+                    if (_btnReply[i].Contains(e.Location))
+                    {
+                        // 点开这一行就算看过了
+                        SessionScanner.MarkSeen(item.Id);
+                        if (ReplyRequested != null) ReplyRequested(item);
                         return;
                     }
                 }
@@ -882,6 +964,8 @@ namespace HajimiPet
                     if (_rowRects[i].Contains(e.Location))
                     {
                         SessionItem picked = (i < _active.Count) ? _active[i] : null;
+                        // 点开即视为已查看，跑完的角标计数随之下降
+                        if (picked != null) SessionScanner.MarkSeen(picked.Id);
                         CloseList();
                         if (SessionRequested != null && picked != null)
                         {
@@ -892,7 +976,8 @@ namespace HajimiPet
                 }
             }
 
-            if (_badgeRect.Contains(e.Location))
+            // 角标在空闲时不画，命中判断要跳过空矩形
+            if (_badgeRect != Rectangle.Empty && _badgeRect.Contains(e.Location))
             {
                 ToggleList();
                 return;
@@ -978,11 +1063,17 @@ namespace HajimiPet
                 items.Clear();
                 for (int i = 0; i < want; i++)
                 {
+                    // 交替造出三种状态，方便验证角标/列表的显示差异
+                    bool active = (i % 3) == 0;
+                    bool unread = !active && (i % 3) == 1;
                     items.Add(new SessionItem
                     {
                         Id = "debug-" + i,
-                        Title = "调试会话 " + (i + 1),
-                        Active = true,
+                        Title = active ? ("进行中 " + (i + 1))
+                             : unread ? ("刚跑完 " + (i + 1))
+                             : ("已看过 " + (i + 1)),
+                        Active = active,
+                        Unread = unread,
                         Turn = 1,
                         Updated = DateTime.Now.AddMinutes(-i * 3),
                         Ago = i == 0 ? "刚刚" : (i * 3) + " 分前",
@@ -1006,7 +1097,11 @@ namespace HajimiPet
 
             _active.Clear();
             _active.AddRange(items);
+            int prevCount = _activeCount;
             _activeCount = items.Count;
+
+            // 角标占位与否会改变窗口高度，所以"有没有东西可显示"也算变化
+            bool layoutChanged = changed || (prevCount > 0) != (_activeCount > 0);
 
             if (changed)
             {
@@ -1017,16 +1112,16 @@ namespace HajimiPet
                 }
                 _lastNotified = _activeCount;
 
-                // 列表正展开时，行数变了就要同步调整窗口高度
-                if (_listOpen)
-                {
-                    int bottom = Top + Height;
-                    ApplyLayout();
-                    Top = bottom - Height;
-                }
-
                 Action<int> handler = ActiveCountChanged;
                 if (handler != null) handler(_activeCount);
+            }
+
+            // 列表展开时行数会变；空闲/有角标切换也会变高度
+            if (_listOpen || layoutChanged)
+            {
+                int bottom = Top + Height;
+                ApplyLayout();
+                Top = bottom - Height;
             }
         }
 

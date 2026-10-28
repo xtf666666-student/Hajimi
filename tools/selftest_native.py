@@ -104,9 +104,14 @@ def main():
         opaque = int((a[:, :, 3] > 200).sum())
         check('猫本体已渲染', opaque > 2000, f'不透明像素={opaque}')
 
-        w_idle, w_busy = band_width(idle), band_width(busy)
-        check('空闲不显示数字 0（窄灰胶囊）', 14 <= w_idle <= 26, f'{w_idle}px')
-        check('有任务时显示数字', w_busy > w_idle + 4, f'{w_idle}px -> {w_busy}px')
+        # 空闲帧变矮后猫耳贴到顶部，像素扫描会误判成角标；
+        # 用渲染器上报的矩形判断角标是否存在。
+        import json as _json
+        gi = _json.loads((FRAMES / 'idle.json').read_text(encoding='utf-8-sig'))
+        gb = _json.loads((FRAMES / 'busy3.json').read_text(encoding='utf-8-sig'))
+        check('空闲时头顶无角标', gi['badge'][2] == 0 and gi['badge'][3] == 0,
+              f"badge={gi['badge']}")
+        check('有任务时显示数字', gb['badge'][2] > 10, f"badge={gb['badge']}")
 
         al = a[:, :, 3]
         rows = [y for y in range(al.shape[0]) if (al[y] > 200).sum() > 3]
