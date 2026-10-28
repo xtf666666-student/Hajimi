@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-28T03:14:44.394Z",
+  "updatedAt": "2026-10-28T13:23:33.054Z",
   "pets": [
     {
       "id": "hajimi-desktop-pet",
@@ -18,7 +18,7 @@
             "win32-x64": {
               "bundled": {
                 "path": "assets/HajimiPet.exe",
-                "sha256": "69d832691e35a164114cd1a7f2216708a53ff177d4333155781253f81b28d3aa"
+                "sha256": "a60aa1b86281b8322422f6ccf927267824ac2e2359c023a9b930a2e91e57463b"
               }
             }
           }

@@ -1,0 +1,38 @@
+{
+  "name": "dsh-pet-bridge",
+  "version": "1.0.0",
+  "description": "给桌宠用的最小会话控制桥：暴露 session cancel / prompt，密钥写在 DSH_HOME/pet-bridge.token | Minimal session-control bridge for desktop pets",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "desktop-pet"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-rc <5"
+  },
+  "engines": {
+    "node": "^22.15.0 || >=24.0.0"
+  },
+  "scripts": {
+    "check": "node --check lib/index.js"
+  }
+}

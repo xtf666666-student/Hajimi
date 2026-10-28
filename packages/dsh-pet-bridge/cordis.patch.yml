@@ -1,0 +1,5 @@
+# dsh-pet-bridge bundle 层：插入桌宠控制桥。
+- insert:
+    - id: dsh-pet-bridge
+      name: 'dsh-pet-bridge'
+      config: {}

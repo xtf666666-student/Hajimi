@@ -69,6 +69,24 @@ namespace HajimiPet
             {
                 if (args[i] == "--dump" && i + 1 < args.Length) dumpDir = args[i + 1];
             }
+
+            // 桥接自检：走一遍真实的 PetBridge 调用后退出，用于验证端到端连通。
+            if (Array.IndexOf(args, "--bridge-selftest") >= 0)
+            {
+                string why;
+                if (PetBridge.Available(out why)) Console.Out.Write("token-ok ");
+                else Console.Out.Write("token-fail(" + why + ") ");
+
+                PetBridge.BridgeResult ping = PetBridge.Cancel("__ping__");
+                if (ping.Status == 401) Console.Out.Write("ping-401 ");
+                else Console.Out.Write("ping-ok ");
+
+                PetBridge.BridgeResult r = PetBridge.Cancel("session-does-not-exist-0000");
+                if (r.Ok) Console.Out.Write("cancel-ok ");
+                else if (r.Status == 409) Console.Out.Write("cancel-409 ");
+                else Console.Out.Write("cancel-" + r.Status + "(" + r.Error + ") ");
+                return;
+            }
             if (dumpDir != null)
             {
                 System.IO.Directory.CreateDirectory(dumpDir);
@@ -190,46 +208,81 @@ namespace HajimiPet
         }
 
         /// <summary>
-        /// 「回复」：把标题放进剪贴板 → 唤出 DSH → Ctrl+K 搜索 → 粘贴 → 回车。
-        /// 这样会真的跳到那个对话，光标停在输入区，用户直接打字即可。
-        /// DSH 没有对外的发送接口，最后一步"发出"必须由用户按下回车。
+        /// 「回复」：优先走 pet-bridge 直接把消息发进该会话。
+        /// 桥接不可用时退回「唤出 DSH + Ctrl+K 定位 + 粘贴」，由用户按回车。
         /// </summary>
         private static void OnReplyRequested(SessionItem item)
         {
+            string reason;
+            if (PetBridge.Available(out reason))
+            {
+                // 桥接只负责把消息送进去；这里发一句最常用的追问，
+                // 用户随后可以在 DSH 里继续输入。
+                PetBridge.BridgeResult r = PetBridge.Prompt(item.Id, "继续");
+                if (r.Ok)
+                {
+                    _pet.Say("已发送到该对话");
+                    OpenDsh();
+                    return;
+                }
+                _pet.Say("桥接失败：" + Short(r.Error));
+            }
+            else
+            {
+                _pet.Say("桥接未就绪，改用定位");
+            }
+
             try
             {
                 Clipboard.SetText(item.Title);
             }
             catch
             {
-                _pet.Say("复制失败");
                 return;
             }
-
             OpenDsh();
             JumpToSessionInDsh(item.Title);
-            _pet.Say("已跳到该对话，直接输入");
         }
 
         /// <summary>
-        /// 「停止」：同样先跳到那个对话，然后由用户点停止。
-        /// DSH 未开放 cancel 接口，桌宠不伪造"已停止"。
+        /// 「停止」：优先走 pet-bridge 真正取消这一轮。
+        /// 桥接不可用时只做定位，不会谎称已停止。
         /// </summary>
         private static void OnStopRequested(SessionItem item)
         {
-            try
+            string reason;
+            if (!PetBridge.Available(out reason))
             {
-                Clipboard.SetText(item.Title);
-            }
-            catch
-            {
-                _pet.Say("复制失败");
+                _pet.Say("桥接未就绪，需手动停止");
+                try { Clipboard.SetText(item.Title); } catch { return; }
+                OpenDsh();
+                JumpToSessionInDsh(item.Title);
                 return;
             }
 
-            OpenDsh();
-            JumpToSessionInDsh(item.Title);
-            _pet.Say("已定位，点 DSH 里的停止");
+            PetBridge.BridgeResult r = PetBridge.Cancel(item.Id);
+            if (r.Ok)
+            {
+                // 桥接返回 ok 表示真的调到了 agent.cancel()，或该会话本就没在跑
+                bool idle = r.Body != null && r.Body.IndexOf("\"alreadyIdle\":true", StringComparison.Ordinal) >= 0;
+                _pet.Say(idle ? "该任务已结束" : "已停止该任务");
+                _pet.RefreshSessions();
+            }
+            else if (r.Status == 409)
+            {
+                _pet.Say("停止失败：会话不在运行");
+                _pet.RefreshSessions();
+            }
+            else
+            {
+                _pet.Say("停止失败：" + Short(r.Error));
+            }
+        }
+
+        private static string Short(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "未知原因";
+            return s.Length > 22 ? s.Substring(0, 22) + "…" : s;
         }
 
         /// <summary>用 DSH 的 Ctrl+K 搜索把目标会话选中。</summary>
