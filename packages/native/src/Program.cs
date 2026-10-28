@@ -14,6 +14,7 @@ namespace HajimiPet
         private static NotifyIcon _tray;
         private static PetForm _pet;
         private static ContextMenuStrip _menu;
+        private static ReplyBox _replyBox;
 
         [STAThread]
         private static void Main(string[] args)
@@ -85,6 +86,13 @@ namespace HajimiPet
                 if (r.Ok) Console.Out.Write("cancel-ok ");
                 else if (r.Status == 409) Console.Out.Write("cancel-409 ");
                 else Console.Out.Write("cancel-" + r.Status + "(" + r.Error + ") ");
+                return;
+            }
+
+            // 回复框自检：真实创建窗口、检查焦点与提交回调，然后退出。
+            if (Array.IndexOf(args, "--reply-selftest") >= 0)
+            {
+                RunReplyBoxSelftest();
                 return;
             }
             if (dumpDir != null)
@@ -208,40 +216,63 @@ namespace HajimiPet
         }
 
         /// <summary>
-        /// 「回复」：优先走 pet-bridge 直接把消息发进该会话。
-        /// 桥接不可用时退回「唤出 DSH + Ctrl+K 定位 + 粘贴」，由用户按回车。
+        /// 「回复」：弹出输入框，把用户真正写的话发进该会话。
+        ///
+        /// 桥接可用时：用户在输入框按 Enter，消息直接进入该会话（走 DSH 自己的
+        /// createUserMessage -> agent.followup 路径）。
+        /// 桥接不可用时：输入框照常弹，但提交后改成「复制 + 唤出 DSH 定位」，
+        /// 由用户粘贴并回车，不谎称已经发送。
         /// </summary>
         private static void OnReplyRequested(SessionItem item)
         {
-            string reason;
-            if (PetBridge.Available(out reason))
+            if (_replyBox != null && !_replyBox.IsDisposed)
             {
-                // 桥接只负责把消息送进去；这里发一句最常用的追问，
-                // 用户随后可以在 DSH 里继续输入。
-                PetBridge.BridgeResult r = PetBridge.Prompt(item.Id, "继续");
-                if (r.Ok)
-                {
-                    _pet.Say("已发送到该对话");
-                    OpenDsh();
-                    return;
-                }
-                _pet.Say("桥接失败：" + Short(r.Error));
-            }
-            else
-            {
-                _pet.Say("桥接未就绪，改用定位");
-            }
-
-            try
-            {
-                Clipboard.SetText(item.Title);
-            }
-            catch
-            {
+                _replyBox.Close();
+                _replyBox = null;
                 return;
             }
-            OpenDsh();
-            JumpToSessionInDsh(item.Title);
+
+            string reason;
+            bool bridged = PetBridge.Available(out reason);
+
+            // 浮在桌宠旁边
+            var anchor = new Point(_pet.Left, _pet.Top);
+            var box = new ReplyBox(item.Title, anchor, string.Empty);
+
+            box.Submitted += text =>
+            {
+                if (bridged)
+                {
+                    PetBridge.BridgeResult r = PetBridge.Prompt(item.Id, text);
+                    if (r.Ok)
+                    {
+                        _pet.Say("已发送到该对话");
+                        _pet.RefreshSessions();
+                        return;
+                    }
+                    _pet.Say("发送失败：" + Short(r.Error));
+                    return;
+                }
+
+                // 没有桥接：把文本交给剪贴板，让用户在 DSH 里粘贴
+                try
+                {
+                    Clipboard.SetText(text);
+                }
+                catch
+                {
+                    _pet.Say("复制失败");
+                    return;
+                }
+                OpenDsh();
+                _pet.Say("已复制，去 DSH 粘贴");
+            };
+
+            box.FormClosed += (s, e) => { _replyBox = null; };
+            box.Show();
+            _replyBox = box;
+
+            if (!bridged) _pet.Say("桥接未就绪，将复制文本");
         }
 
         /// <summary>
@@ -283,6 +314,54 @@ namespace HajimiPet
         {
             if (string.IsNullOrEmpty(s)) return "未知原因";
             return s.Length > 22 ? s.Substring(0, 22) + "…" : s;
+        }
+
+        /// <summary>
+        /// 回复框自检：真的建一个 ReplyBox，填入文本，触发提交回调，
+        /// 确认窗口能创建、能拿焦点、能把用户文本原样交出去。
+        /// </summary>
+        private static void RunReplyBoxSelftest()
+        {
+            string captured = null;
+            var box = new ReplyBox("自检会话标题", new Point(200, 200), "自检文本");
+            box.Submitted += text => { captured = text; };
+
+            box.Show();
+            Application.DoEvents();
+            Console.Out.Write("box-ok ");
+
+            // 焦点应落在输入框上（ReplyBox 在 Shown 里 Focus）
+            Application.DoEvents();
+            bool focused = box.ActiveControl != null;
+            Console.Out.Write(focused ? "focus-ok " : "focus-fail ");
+
+            // 触发提交：找到 TextBox 并模拟 Enter
+            var tb = FindTextBox(box);
+            if (tb != null)
+            {
+                tb.Text = "自检发送内容";
+                var ev = new KeyEventArgs(Keys.Enter);
+                var mi = typeof(ReplyBox).GetMethod("OnInputKeyDown",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                mi.Invoke(box, new object[] { tb, ev });
+                Application.DoEvents();
+            }
+
+            Console.Out.Write(captured == "自检发送内容"
+                ? "submit-ok "
+                : "submit-fail(" + (captured ?? "null") + ") ");
+            if (!box.IsDisposed) box.Close();
+        }
+
+        private static TextBox FindTextBox(Control root)
+        {
+            if (root is TextBox t) return t;
+            foreach (Control c in root.Controls)
+            {
+                TextBox found = FindTextBox(c);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         /// <summary>用 DSH 的 Ctrl+K 搜索把目标会话选中。</summary>

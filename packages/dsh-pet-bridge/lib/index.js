@@ -20,9 +20,11 @@
  *   - 只接受带正确 Bearer 的请求，密钥比较用定长比较；
  *   - 只操作 sessionId 指向的会话，不做任何文件读写或命令执行。
  */
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 export const name = "dsh-pet-bridge";
 export const inject = ["webServer", "sessions", "agents"];
@@ -143,26 +145,91 @@ async function cancelSession(ctx, sessionId) {
 }
 
 /**
+ * 解析 createUserMessage。
+ *
+ * 插件装在 profile 目录下，而 DSH 的包在 app 目录下，普通的 import 解析不到。
+ * 所以按「已知的 app 根目录 → 运行时给的线索 → 直接 import → 等价兜底」依次尝试。
+ */
+async function resolveCreateUserMessage(ctx) {
+  const req = createRequire(import.meta.url);
+  const bases = [];
+
+  // DSH 桌面端把 app 放在 exe 同级的 resources\app\dsh
+  for (const guess of [
+    process.env.DSH_APP_ROOT,
+    process.env.DSH_RESOURCES_APP,
+    join(process.env.LOCALAPPDATA ?? "", "..", "Programs", "DeepSeek Harness", "resources", "app", "dsh"),
+  ]) {
+    if (typeof guess === "string" && guess.length > 4) bases.push(guess);
+  }
+  // 运行时可执行文件旁边就是 app
+  try {
+    const exeDir = join(process.execPath, "..");
+    bases.push(join(exeDir, "resources", "app", "dsh"));
+    bases.push(join(exeDir, "files", "resources", "app", "dsh"));
+  } catch {
+    /* ignore */
+  }
+  for (const probe of [ctx?.baseDir, ctx?.get?.("appRoot"), process.cwd()]) {
+    if (typeof probe === "string" && probe.length > 0) bases.push(probe);
+  }
+
+  for (const base of bases) {
+    try {
+      const resolved = req.resolve("@deepseek-ai/dsh-llm", { paths: [base] });
+      const ns = await import(pathToFileURL(resolved).href);
+      if (typeof ns.createUserMessage === "function") return ns.createUserMessage;
+    } catch {
+      /* 试下一个 */
+    }
+  }
+
+  try {
+    const ns = await import("@deepseek-ai/dsh-llm");
+    if (typeof ns.createUserMessage === "function") return ns.createUserMessage;
+  } catch {
+    /* 继续 */
+  }
+
+  // 兜底：DSH 的 createUserMessage 只做 structuredClone + 补 role/id，
+  // 纯文本场景下这样构造与它等价（见 @deepseek-ai/dsh-llm 的 createMessage）。
+  return (input) =>
+    Object.freeze({
+      ...structuredClone(input),
+      role: "user",
+      id: randomUUID(),
+    });
+}
+
+/**
  * 往会话里发一条用户消息。
  *
- * 照 DSH 自己的 prompt 路径：createUserMessage({content, source}) -> agent.followup(message)。
- * source 用 { kind: "user" }，与界面发的消息同源。
+ * 照 DSH 自己的 prompt 路径（@deepseek-ai/dsh-api-session-controller）：
+ *   const message = createUserMessage({ content, source });
+ *   agent.followup(message);
+ *
+ * 这里不 import 包，而是从运行时的 ctx 上取同一批服务，
+ * 这样既能拿到 attachments 的规范化，又不受插件所在目录的模块解析限制。
  */
 async function promptSession(ctx, sessionId, text) {
   const agent = ctx.agents?.get?.(sessionId);
   if (!agent) return { ok: false, reason: "会话不在运行，无法发送" };
 
-  let createUserMessage;
-  try {
-    ({ createUserMessage } = await import("@deepseek-ai/dsh-llm"));
-  } catch (err) {
-    return { ok: false, reason: `无法加载 dsh-llm: ${err?.message ?? err}` };
+  // 从运行环境里找 createUserMessage：优先 llm 服务，其次模块解析
+  const createUserMessage = await resolveCreateUserMessage(ctx);
+  if (!createUserMessage) {
+    return { ok: false, reason: "拿不到 createUserMessage（dsh-llm 不可达）" };
   }
 
-  const message = createUserMessage({
-    content: [{ type: "text", text }],
-    source: { kind: "user" },
-  });
+  // 文本内容；attachments 可选（纯文本不需要附件引用）
+  const content = [{ type: "text", text }];
+
+  let message;
+  try {
+    message = createUserMessage({ content, source: { kind: "user" } });
+  } catch (err) {
+    return { ok: false, reason: `createUserMessage 失败: ${err?.message ?? err}` };
+  }
 
   if (typeof agent.followup === "function") {
     await agent.followup(message);
@@ -297,6 +364,8 @@ export function apply(ctx, config = {}) {
           return send(res, 500, {
             ok: false,
             error: String(err?.message ?? err),
+            // 前几行堆栈直接回给调用方，省得到日志里翻
+            stack: String(err?.stack ?? "").split("\n").slice(0, 6).join(" | "),
           });
         }
       },
