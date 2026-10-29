@@ -130,33 +130,6 @@ namespace HajimiPet
 
         public int PetSize { get; private set; }
         public bool DemoRun { get; set; }
-        /// <summary>atlas 是否已装载（没装就退回分层渲染）。</summary>
-        public bool AtlasLoaded { get { return _atlas != null; } }
-
-        private SpriteSheet _atlas;
-        private double _atlasClock;
-        private int _lastAtlasRow = -1;
-        private int _lastAtlasFrame = -1;
-
-        /// <summary>从 ~/.dsh/pets/hajimi-desktop-pet 读 atlas。</summary>
-        private void TryLoadAtlas()
-        {
-            try
-            {
-                string home = Environment.GetEnvironmentVariable("DSH_HOME");
-                if (string.IsNullOrEmpty(home))
-                {
-                    home = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh");
-                }
-                string petDir = Path.Combine(home, "pets", "hajimi-desktop-pet");
-                _atlas = SpriteSheet.LoadFromPetDir(petDir);
-            }
-            catch
-            {
-                _atlas = null;
-            }
-        }
         /// <summary>测试用：强制覆盖"进行中对话数"，用于验证空闲态外观。</summary>
         public int? DebugActiveOverride { get; set; }
 
@@ -243,9 +216,6 @@ namespace HajimiPet
             _legLeft = LoadBitmap("pet-leg-left.png");
             _legRight = LoadBitmap("pet-leg-right.png");
             _shadow = LoadBitmap("pet-shadow.png");
-
-            // 优先用安装好的 Codex 规格 atlas；没有就退回分层渲染
-            TryLoadAtlas();
 
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
@@ -372,9 +342,6 @@ namespace HajimiPet
             if (_bubbleLeft > 0) _bubbleLeft--;
             if (_badgePulse > 0) _badgePulse--;
 
-            // atlas 的帧时钟：与 33ms 定时器同步推进
-            _atlasClock += 0.033;
-
             // 气泡出现/消失会改变需要的窗口宽度，宽度变化时重新布局并贴回原位
             if (bubbleWas != BubbleVisible()) Reflow();
 
@@ -469,36 +436,19 @@ namespace HajimiPet
                 DrawPlain(canvas, _shadow,
                     new Rectangle(shadowX, footY - 1, sw, sh));
 
-                if (_atlas != null)
-                {
-                    // ---- 走 atlas：按行/帧播放，和 Codex 宿主一致 ----
-                    SpriteSheet.Row row = PickAtlasRow(sprinting);
-                    long elapsed = (long)(_atlasClock * 1000.0);
-                    int frame = SpriteSheet.FrameAt(row, elapsed);
-                    using (Graphics ag = Graphics.FromImage(canvas))
-                    {
-                        _atlas.DrawFrame(ag, row, frame, new Rectangle(catX, catY, catW, catH));
-                    }
-                    _lastAtlasRow = (int)row;
-                    _lastAtlasFrame = frame;
-                }
-                else
-                {
-                    // ---- 退回分层渲染（老素材路径）----
-                    // 2. feet first, so the torso can cover the ankle cut.
-                    // lift/dash are given in SOURCE pixels and scaled here, so the
-                    // motion reads the same at every pet size.
-                    float sLift = scale;
-                    DrawLeg(canvas, _legLeft, catX, catY, catW, catH, scale,
-                        ANKLE_L_X, -dash * 1.6f * sLift, -liftL * sLift, ankL);
-                    DrawLeg(canvas, _legRight, catX, catY, catW, catH, scale,
-                        ANKLE_R_X, dash * 1.6f * sLift, -liftR * sLift, ankR);
+                // 2. feet first, so the torso can cover the ankle cut.
+                // lift/dash are given in SOURCE pixels and scaled here, so the
+                // motion reads the same at every pet size.
+                float sLift = scale;
+                DrawLeg(canvas, _legLeft, catX, catY, catW, catH, scale,
+                    ANKLE_L_X, -dash * 1.6f * sLift, -liftL * sLift, ankL);
+                DrawLeg(canvas, _legRight, catX, catY, catW, catH, scale,
+                    ANKLE_R_X, dash * 1.6f * sLift, -liftR * sLift, ankR);
 
-                    // 3. torso last
-                    DrawRotated(canvas, _torso,
-                        new Rectangle(catX + (int)(dash * 1.2f * scale), catY - (int)(bodyBob * scale), catW, catH),
-                        sway + _tiltX + lean, w / 2f, h * 0.96f);
-                }
+                // 3. torso last
+                DrawRotated(canvas, _torso,
+                    new Rectangle(catX + (int)(dash * 1.2f * scale), catY - (int)(bodyBob * scale), catW, catH),
+                    sway + _tiltX + lean, w / 2f, h * 0.96f);
 
                 // 4. overlays
                 // 角标紧贴猫头顶
@@ -512,25 +462,6 @@ namespace HajimiPet
                 if (BubbleVisible()) DrawBubble(canvas, w, catY, catX, catW);
                 if (_listOpen) DrawList(canvas, w, listTop);
             }
-        }
-
-        /// <summary>
-        /// 选当前该播哪一行。和 Codex 宿主的语义对齐：
-        /// 有任务在跑 = running；刚跑完未看 = review；
-        /// 空闲但鼠标在身上 = waving；其余 = idle。
-        /// </summary>
-        private SpriteSheet.Row PickAtlasRow(bool sprinting)
-        {
-            if (sprinting) return SpriteSheet.Row.Running;
-            for (int i = 0; i < _active.Count; i++)
-            {
-                if (_active[i].Unread) return SpriteSheet.Row.Review;
-            }
-            if (_activeCount > 0)
-            {
-                return _hover ? SpriteSheet.Row.Waving : SpriteSheet.Row.Waiting;
-            }
-            return SpriteSheet.Row.Idle;
         }
 
         /// <summary>Translate the leg, then rotate it about its own ankle.</summary>

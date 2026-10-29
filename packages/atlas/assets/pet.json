@@ -1,7 +1,0 @@
-{
-  "id": "hajimi-desktop-pet",
-  "displayName": "哈基米桌宠",
-  "description": "常驻 Windows 桌面的哈基米猫猫桌宠，显示 DeepSeek Harness 里正在运行的对话数，鼠标移到身上会跑，点数字可展开会话列表并回复或停止。",
-  "spriteVersionNumber": 2,
-  "spritesheetPath": "spritesheet.webp"
-}
