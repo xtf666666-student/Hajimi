@@ -237,7 +237,7 @@ namespace HajimiPet
 
             // 浮在桌宠旁边
             var anchor = new Point(_pet.Left, _pet.Top);
-            var box = new ReplyBox(item.Title, anchor, string.Empty);
+            var box = new ReplyBox(item.Title, anchor);
 
             box.Submitted += text =>
             {
@@ -323,7 +323,7 @@ namespace HajimiPet
         private static void RunReplyBoxSelftest()
         {
             string captured = null;
-            var box = new ReplyBox("自检会话标题", new Point(200, 200), "自检文本");
+            var box = new ReplyBox("自检会话标题", new Point(200, 200));
             box.Submitted += text => { captured = text; };
 
             box.Show();
@@ -341,9 +341,10 @@ namespace HajimiPet
             {
                 tb.Text = "自检发送内容";
                 var ev = new KeyEventArgs(Keys.Enter);
-                var mi = typeof(ReplyBox).GetMethod("OnInputKeyDown",
+                // 输入框的键处理挂在 TextBox 上，直接触发它的 KeyDown
+                var mi = typeof(Control).GetMethod("OnKeyDown",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                mi.Invoke(box, new object[] { tb, ev });
+                mi.Invoke(tb, new object[] { ev });
                 Application.DoEvents();
             }
 

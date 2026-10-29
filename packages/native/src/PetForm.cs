@@ -119,6 +119,9 @@ namespace HajimiPet
         // 会话行右侧的图标按钮尺寸
         private const int BtnSize = 15;
 
+        // 卡片堆叠布局（iPhone 通知那种）
+        private readonly StackLayout _stack = new StackLayout();
+
         public event Action OpenDshRequested;
         public event Action<SessionItem> SessionRequested;
         /// <summary>会话行右侧「回复」按钮。</summary>
@@ -143,6 +146,13 @@ namespace HajimiPet
             DebugActiveOverride = activeOverride;
             Poll();
             _listOpen = listOpen;
+            if (_listOpen)
+            {
+                // 导图要求"完全展开"的稳定画面，不能停在弹簧中途
+                int rows = Math.Min(_active.Count, StackLayout.MaxCards);
+                _stack.SetRows(rows);
+                _stack.SnapSpread(1f);
+            }
             // Poll 之后才知道有多少行，必须重新按行数布局
             ApplyLayout();
             Render();
@@ -256,8 +266,20 @@ namespace HajimiPet
         public void ApplySize(int size)
         {
             PetSize = Math.Max(72, Math.Min(180, size));
-            ApplyLayout();
+            Reflow();
             Render();
+        }
+
+        /// <summary>
+        /// 猫在窗口内的左边界。
+        ///
+        /// 有气泡时窗口向左加宽，猫仍然贴在窗口右侧 —— 这样猫的屏幕位置不变，
+        /// 气泡占的是新加出来的左侧空间，既不盖身体，也不会让猫"往右挪"。
+        /// </summary>
+        private int CatLeftInWindow(int w)
+        {
+            int catW = (int)(PetSize * 0.817f);
+            return w - catW - 7;
         }
 
         private void ApplyLayout()
@@ -268,17 +290,16 @@ namespace HajimiPet
 
             int listH = CurrentListHeight();
 
-            // 气泡出现在猫的右侧，所以窗口要预留右侧空间；气泡不显示时收回。
-            int bubbleSide = BubbleVisible() ? BubbleWidth + BubbleGap : 0;
-
             int baseW = catW + 14;
             int w = baseW;
-            if (bubbleSide > 0) w = baseW + bubbleSide;
-            if (listH > 0) w = Math.Max(w, ListWidth + 10);
+            // 气泡完全占在猫左侧的额外空间里，不与身体重叠
+            if (BubbleVisible()) w += BubbleWidth + BubbleGap;
+            // 堆叠卡片比猫宽，展开时要撑开窗口
+            if (listH > 0) w = Math.Max(w, StackLayout.CardW + 12);
             // 顶部区域：有角标时才占位，没有任务时头顶留干净
             int badgeH = _activeCount > 0 ? BadgeH + BadgeGap : 0;
             int bodyH = badgeH + catH + shadowH;
-            // 列表展开时，在主体上方额外加上列表高度
+            // 列表在主体上方
             int h = bodyH + listH;
             ClientSize = new Size(w, h);
         }
@@ -299,9 +320,11 @@ namespace HajimiPet
         private int CurrentListHeight()
         {
             if (!_listOpen) return 0;
-            int count = Math.Min(_active.Count, ListMaxRows);
+            int count = Math.Min(_active.Count, StackLayout.MaxCards);
             if (count <= 0) return 0;
-            return count * ListRowH + ListPadY;
+            // 用弹簧插值后的高度，窗口随展开动画一起长大，而不是瞬间跳变
+            if (_stack.Rows != count) _stack.SetRows(count);
+            return _stack.CurrentHeight();
         }
 
         private static Bitmap LoadBitmap(string name)
@@ -342,20 +365,33 @@ namespace HajimiPet
             if (_bubbleLeft > 0) _bubbleLeft--;
             if (_badgePulse > 0) _badgePulse--;
 
+            // 卡片堆叠的弹簧动画：展开/收起都是插值过去的，不是瞬间跳变
+            bool stackMoving = _stack.Step(0.033f);
+            if (stackMoving && _listOpen) Reflow();
+
             // 气泡出现/消失会改变需要的窗口宽度，宽度变化时重新布局并贴回原位
             if (bubbleWas != BubbleVisible()) Reflow();
 
             Render();
         }
 
-        /// <summary>窗口尺寸需要变化时调用：保持右边缘和底边不动，避免桌宠跳位。</summary>
+        /// <summary>
+        /// 窗口尺寸变化时重新布局。
+        ///
+        /// 关键是保持**猫的屏幕坐标**不变：猫贴窗口右侧，所以窗口变宽时
+        /// Left 要同步左移相同像素，猫在屏幕上才不会"往右挪"。
+        /// </summary>
         private void Reflow()
         {
-            int right = Left + Width;
+            int oldW = Width;
             int bottom = Top + Height;
+            int catScreenX = Left + CatLeftInWindow(oldW);   // 猫当前的屏幕 x
+
             ApplyLayout();
-            Left = right - Width;
+
+            Left = catScreenX - CatLeftInWindow(Width);
             Top = bottom - Height;
+            ClampToScreen();
         }
 
         private void Render()
@@ -386,9 +422,8 @@ namespace HajimiPet
             {
                 int catH = PetSize;
                 int catW = (int)(PetSize * 0.817f);
-                // 有侧边气泡时猫靠右（气泡在左侧向左展开，不会出屏）；否则居中。
-                bool bubbleOn = BubbleVisible();
-                int catX = bubbleOn ? (w - catW - 2) : (w - catW) / 2;
+                // 猫贴窗口右侧：气泡出现时窗口向左长，猫的屏幕位置不动。
+                int catX = CatLeftInWindow(w);
                 // 猫始终固定在窗口底部（脚底+阴影不因列表展开而移动），
                 // 列表向上升，这样展开时猫不会掉出窗口，也不会被任务栏遮住。
                 int shadowH = Math.Max(6, (int)(catH * 0.06f));
@@ -603,8 +638,8 @@ namespace HajimiPet
 
                     int bw = Math.Min(BubbleWidth, (int)ts.Width + 18);
                     int bh = (int)ts.Height + 10;
-                    // 气泡右边缘贴在猫左边，向左展开
-                    int bx = Math.Max(1, catX - BubbleGap - bw);
+                    // 气泡整个放在猫左侧的预留带里，右边缘与猫留出间距，绝不压到身体
+                    int bx = Math.Max(2, catX - BubbleGap - bw);
                     int by = catY + Math.Max(2, (int)(PetSize * 0.10f));
                     _lastBubbleRect = new Rectangle(bx, by, bw, bh);
 
@@ -733,120 +768,142 @@ namespace HajimiPet
             using (Graphics g = Graphics.FromImage(canvas))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                int count = Math.Min(_active.Count, ListMaxRows);
+                int count = Math.Min(_active.Count, StackLayout.MaxCards);
                 if (count == 0)
                 {
                     _rowRects = new Rectangle[0];
+                    _btnClose = new Rectangle[0];
+                    _btnReply = new Rectangle[0];
+                    _btnStop = new Rectangle[0];
                     return;
                 }
 
                 _rowRects = new Rectangle[count];
+                _btnClose = new Rectangle[count];
                 _btnReply = new Rectangle[count];
                 _btnStop = new Rectangle[count];
-                _btnClose = new Rectangle[count];
 
-                int lw = Math.Min(w - 8, ListWidth);
-                int lh = count * ListRowH + ListPadY;
-                int lx = (w - lw) / 2;
-                int ly = Math.Max(0, listTop);
+                int cardW = Math.Min(w - 10, StackLayout.CardW);
+                int cardH = StackLayout.CardH;
+                int lx = (w - cardW) / 2;
+                int baseY = Math.Max(0, listTop);
 
-                // 让列表底边正好落在 listTop + listH = 角标顶边，不留空隙
-                lh = Math.Max(ListRowH + ListPadY, Math.Min(lh, listTop + lh - ly));
-                _lastListRect = new Rectangle(lx, ly, lw, lh);
+                if (_stack.Rows != count) _stack.SetRows(count);
+                _lastListRect = new Rectangle(lx, baseY,
+                    cardW, Math.Max(cardH, _stack.CurrentHeight()));
 
-                using (GraphicsPath path = RoundRect(new Rectangle(lx, ly, lw, lh), 9))
-                using (SolidBrush bg = new SolidBrush(Color.FromArgb(252, 255, 253, 248)))
-                using (Pen pen = new Pen(Color.FromArgb(215, 240, 176, 110), 1f))
+                using (Font font = new Font("Microsoft YaHei UI", 9f))
+                using (Font timeFont = new Font("Microsoft YaHei UI", 7.5f))
                 {
-                    g.FillPath(bg, path);
-                    g.DrawPath(pen, path);
-                }
-
-                using (Font font = new Font("Microsoft YaHei UI", 8.5f))
-                {
-                    for (int i = 0; i < count; i++)
+                    // 从最底下那张往上画，这样上面的卡片自然压住下面的
+                    for (int i = count - 1; i >= 0; i--)
                     {
                         SessionItem item = _active[i];
-                        int ry = ly + 6 + i * ListRowH;
-                        _rowRects[i] = new Rectangle(lx + 3, ry, lw - 6, ListRowH);
-                        _btnReply[i] = default(Rectangle);
-                        _btnStop[i] = default(Rectangle);
-                        _btnClose[i] = default(Rectangle);
+                        int cy = baseY + (int)Math.Round(_stack.YOf(i));
+                        var card = new Rectangle(lx, cy, cardW, cardH);
+                        _rowRects[i] = card;
 
-                        // 状态点：跑着=脉动绿点，跑完未看=琥珀点，看过=空心灰点
-                        int dotX = lx + 9;
-                        int dotY = ry + 7;
-                        if (item.Active)
-                        {
-                            // 外圈光晕表示在跑
-                            using (SolidBrush halo = new SolidBrush(Color.FromArgb(70, 59, 165, 95)))
-                            {
-                                g.FillEllipse(halo, dotX - 2, dotY - 2, 10, 10);
-                            }
-                            using (SolidBrush dot = new SolidBrush(Color.FromArgb(59, 165, 95)))
-                            {
-                                g.FillEllipse(dot, dotX, dotY, 6, 6);
-                            }
-                        }
-                        else if (item.Unread)
-                        {
-                            using (SolidBrush dot = new SolidBrush(Color.FromArgb(230, 156, 62)))
-                            {
-                                g.FillEllipse(dot, dotX, dotY, 6, 6);
-                            }
-                        }
-                        else
-                        {
-                            using (Pen ring = new Pen(Color.FromArgb(190, 180, 168), 1.2f))
-                            {
-                                g.DrawEllipse(ring, dotX, dotY, 5, 5);
-                            }
-                        }
-
-                        // 右侧三个图标按钮：回复 ↩ / 停止 ■ / 叉掉 ×
-                        int btnY = ry + 2;
-                        int closeX = lx + lw - 8 - BtnSize;
-                        int stopX = closeX - 4 - BtnSize;
-                        int replyX = stopX - 4 - BtnSize;
-                        _btnClose[i] = new Rectangle(closeX, btnY, BtnSize, BtnSize);
-                        _btnStop[i] = new Rectangle(stopX, btnY, BtnSize, BtnSize);
-                        _btnReply[i] = new Rectangle(replyX, btnY, BtnSize, BtnSize);
-
-                        // 停止只在真的在跑时才有意义，否则画成禁用态
-                        DrawIconButton(g, _btnReply[i], IconKind.Reply, item.Active || item.Unread);
-                        DrawIconButton(g, _btnStop[i], IconKind.Stop, item.Active);
-                        DrawIconButton(g, _btnClose[i], IconKind.Close, true);
-
-                        // 标题可用宽度：右边让出三个按钮
-                        string ago = item.Ago;
-                        SizeF agoSize = g.MeasureString(ago, font);
-                        int titleRight = replyX - 6;
-                        int titleMax = Math.Max(40, titleRight - (lx + 21));
-                        string title = item.Title;
-                        while (title.Length > 1 && g.MeasureString(title, font).Width > titleMax)
-                        {
-                            title = title.Substring(0, title.Length - 1);
-                        }
-                        if (title.Length < item.Title.Length) title = title.TrimEnd() + "…";
-
-                        // 已完成且看过的行弱化，避免和进行中的抢注意力
-                        int ink = item.Active || item.Unread ? 63 : 150;
-                        using (SolidBrush inkBrush = new SolidBrush(Color.FromArgb(ink, 52, 40)))
-                        {
-                            g.DrawString(title, font, inkBrush, lx + 21, ry + 2);
-                        }
-
-                        using (Font small = new Font("Microsoft YaHei UI", 7.5f))
-                        using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(178, 158, 138)))
-                        {
-                            float tw = g.MeasureString(title, font).Width;
-                            int ax = lx + 21 + (int)tw + 6;
-                            if (ax + (int)agoSize.Width < titleRight)
-                            {
-                                g.DrawString(ago, small, agoBrush, ax, ry + 3);
-                            }
-                        }
+                        // 收起时，被压住的卡片只露出顶部一条，做淡处理
+                        bool covered = (i > 0) && (_stack.Spread < 0.55f);
+                        DrawStackCard(g, card, item, covered, font, timeFont, i);
                     }
+                }
+            }
+        }
+
+        /// <summary>画一张卡片。收起状态下靠下的卡片降低不透明度，形成"一摞"的层次。</summary>
+        private void DrawStackCard(Graphics g, Rectangle card, SessionItem item,
+            bool covered, Font font, Font timeFont, int index)
+        {
+            int alpha = covered ? 210 : 255;
+
+            // 卡片本体：圆角 + 轻微投影，做出厚度感
+            using (GraphicsPath path = RoundRect(new Rectangle(card.X, card.Y + 1, card.Width, card.Height), 11))
+            using (SolidBrush shadow = new SolidBrush(Color.FromArgb(covered ? 18 : 34, 120, 100, 80)))
+            {
+                g.FillPath(shadow, path);
+            }
+
+            using (GraphicsPath path = RoundRect(card, 11))
+            using (SolidBrush bg = new SolidBrush(Color.FromArgb(alpha, 253, 251, 246)))
+            using (Pen border = new Pen(Color.FromArgb(covered ? 120 : 200, 226, 208, 184), 1f))
+            {
+                g.FillPath(bg, path);
+                g.DrawPath(border, path);
+            }
+
+            // 状态点：在跑 = 绿点带光晕；跑完未看 = 绿点（用户要求"完成也是绿色"）；
+            // 已看过 = 空心灰环
+            int dotX = card.X + 10;
+            int dotY = card.Y + (card.Height - 8) / 2;
+            if (item.Active)
+            {
+                using (SolidBrush halo = new SolidBrush(Color.FromArgb(72, 59, 165, 95)))
+                {
+                    g.FillEllipse(halo, dotX - 3, dotY - 3, 14, 14);
+                }
+                using (SolidBrush dot = new SolidBrush(Color.FromArgb(59, 165, 95)))
+                {
+                    g.FillEllipse(dot, dotX, dotY, 8, 8);
+                }
+            }
+            else if (item.Unread)
+            {
+                using (SolidBrush dot = new SolidBrush(Color.FromArgb(74, 178, 110)))
+                {
+                    g.FillEllipse(dot, dotX, dotY, 8, 8);
+                }
+            }
+            else
+            {
+                using (Pen ring = new Pen(Color.FromArgb(190, 180, 168), 1.2f))
+                {
+                    g.DrawEllipse(ring, dotX, dotY, 7, 7);
+                }
+            }
+
+            // × 放在左上角（用户明确要求）
+            int closeX = card.X + 10;
+            int closeY = card.Y - 6;
+            _btnClose[index] = new Rectangle(closeX, closeY, BtnSize, BtnSize);
+            DrawIconButton(g, _btnClose[index], IconKind.Close, true);
+
+            // 右侧两个动作：回复 ↩ / 停止 ■
+            int btnY = card.Y + (card.Height - BtnSize) / 2;
+            int stopX = card.Right - 10 - BtnSize;
+            int replyX = stopX - 6 - BtnSize;
+            _btnStop[index] = new Rectangle(stopX, btnY, BtnSize, BtnSize);
+            _btnReply[index] = new Rectangle(replyX, btnY, BtnSize, BtnSize);
+            DrawIconButton(g, _btnReply[index], IconKind.Reply, true);
+            DrawIconButton(g, _btnStop[index], IconKind.Stop, item.Active);
+
+            // 标题：右侧给两个按钮让位（× 在上方，不占这一行）
+            string ago = item.Ago;
+            SizeF agoSize = g.MeasureString(ago, timeFont);
+            int titleLeft = card.X + 24;
+            int titleRight = replyX - 6;
+            int titleMax = Math.Max(40, titleRight - titleLeft);
+            string title = item.Title;
+            while (title.Length > 1 && g.MeasureString(title, font).Width > titleMax)
+            {
+                title = title.Substring(0, title.Length - 1);
+            }
+            if (title.Length < item.Title.Length) title = title.TrimEnd() + "…";
+
+            int ink = item.Active || item.Unread ? 56 : 152;
+            int textY = card.Y + (card.Height - (int)g.MeasureString(title, font).Height) / 2;
+            using (SolidBrush inkBrush = new SolidBrush(Color.FromArgb(alpha, ink, 46, 34)))
+            {
+                g.DrawString(title, font, inkBrush, titleLeft, textY);
+            }
+
+            using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(alpha, 178, 158, 138)))
+            {
+                float tw = g.MeasureString(title, font).Width;
+                int ax = titleLeft + (int)tw + 7;
+                if (ax + (int)agoSize.Width < titleRight)
+                {
+                    g.DrawString(ago, timeFont, agoBrush, ax, card.Y + card.Height / 2 - (int)agoSize.Height / 2 + 1);
                 }
             }
         }
@@ -924,7 +981,8 @@ namespace HajimiPet
 
             if (_listOpen)
             {
-                // 先判按钮，再判整行：按钮在行内，必须优先命中
+                // 从最上层（数组尾部是屏幕最下面，最上面是 index 0）往下判，
+                // 但绘制是从下往上叠的，所以命中也必须从上往下。
                 for (int i = 0; i < _btnReply.Length; i++)
                 {
                     SessionItem item = (i < _active.Count) ? _active[i] : null;
@@ -932,11 +990,10 @@ namespace HajimiPet
 
                     if (_btnClose[i].Contains(e.Location))
                     {
-                        // 叉掉：从列表移除，角标随之下降
+                        // × 主动移除
                         SessionScanner.Dismiss(item.Id);
-                        CloseList();
                         Poll();
-                        ApplyLayout();
+                        if (_activeCount == 0) CloseList();
                         Say("已移除");
                         return;
                     }
@@ -952,7 +1009,6 @@ namespace HajimiPet
                     }
                     if (_btnReply[i].Contains(e.Location))
                     {
-                        // 点开这一行就算看过了
                         SessionScanner.MarkSeen(item.Id);
                         if (ReplyRequested != null) ReplyRequested(item);
                         return;
@@ -964,13 +1020,21 @@ namespace HajimiPet
                     if (_rowRects[i].Contains(e.Location))
                     {
                         SessionItem picked = (i < _active.Count) ? _active[i] : null;
-                        // 点开即视为已查看，跑完的角标计数随之下降
-                        if (picked != null) SessionScanner.MarkSeen(picked.Id);
-                        CloseList();
-                        if (SessionRequested != null && picked != null)
+                        if (picked == null) continue;
+
+                        // 点开即视为已查看
+                        SessionScanner.MarkSeen(picked.Id);
+
+                        // 用户要求：点已跑完的任务就自动移除；在跑的保留
+                        if (!picked.Active)
                         {
-                            SessionRequested(picked);
+                            SessionScanner.Dismiss(picked.Id);
+                            Poll();
+                            if (_activeCount == 0) CloseList();
                         }
+
+                        if (SessionRequested != null) SessionRequested(picked);
+                        Say("已打开：" + Short2(picked.Title));
                         return;
                     }
                 }
@@ -1007,19 +1071,20 @@ namespace HajimiPet
         {
             if (_listOpen) { CloseList(); return; }
 
-            // 先刷新数据，确认真的有任务在跑，再按行数撑开窗口
             Poll();
             if (_activeCount == 0)
             {
-                Say("没有任务在跑。");
+                Say("现在没有任务");
                 return;
             }
 
-            int bottom = Top + Height;   // 保持窗口底边不动，向上长高
             _listOpen = true;
-            ApplyLayout();
-            Top = bottom - Height;
-            ClampToScreen();
+            int count = Math.Min(_active.Count, StackLayout.MaxCards);
+            _stack.SetRows(count);
+            // 从"叠成一摞"开始，弹簧把它展开
+            _stack.SnapSpread(0f);
+            _stack.SetSpread(true);
+            Reflow();
         }
 
         public void RefreshSessions()
@@ -1027,20 +1092,25 @@ namespace HajimiPet
             Poll();
         }
 
-        /// <summary>收起列表并恢复窗口尺寸（底边保持不动）。</summary>
+        /// <summary>收起列表：弹簧收回去，窗口跟着缩，猫的屏幕位置不动。</summary>
         public void CloseList()
         {
             if (!_listOpen) return;
-            int bottom = Top + Height;
             _listOpen = false;
             _rowRects = new Rectangle[0];
-            ApplyLayout();
-            Top = bottom - Height;
-            ClampToScreen();
+            _stack.SetSpread(false);
+            Reflow();
+        }
+
+        private static string Short2(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            return s.Length > 12 ? s.Substring(0, 12) + "…" : s;
         }
 
         private void ClampToScreen()
         {
+            if (!IsHandleCreated) return;
             Screen screen = Screen.FromPoint(new Point(Left + Width / 2, Top + Height / 2));
             Rectangle work = screen.WorkingArea;
             Left = Math.Max(work.Left - Width + 34, Math.Min(Left, work.Right - 34));
@@ -1119,9 +1189,8 @@ namespace HajimiPet
             // 列表展开时行数会变；空闲/有角标切换也会变高度
             if (_listOpen || layoutChanged)
             {
-                int bottom = Top + Height;
-                ApplyLayout();
-                Top = bottom - Height;
+                if (_listOpen) _stack.SetRows(Math.Min(_active.Count, StackLayout.MaxCards));
+                Reflow();
             }
         }
 

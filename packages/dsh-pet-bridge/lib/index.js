@@ -235,9 +235,10 @@ async function resolveCreateUserMessage(ctx) {
   } catch {
     /* ignore */
   }
-  for (const probe of [ctx?.baseDir, ctx?.get?.("appRoot"), process.cwd()]) {
-    if (typeof probe === "string" && probe.length > 0) bases.push(probe);
-  }
+  // 注意：ctx.baseDir / ctx.appRoot 这类是 cordis 的注入属性，
+  // 没在 inject 里声明就读取会直接抛错（"cannot get property without inject"），
+  // 所以这里只读进程级事实，不碰 ctx 的属性。
+  bases.push(process.cwd());
 
   for (const base of bases) {
     try {
