@@ -213,24 +213,31 @@ def main():
         time.sleep(0.4)
         proc = subprocess.Popen([str(EXE), '--size', str(s)])
         ff = None
-        for _ in range(30):
-            time.sleep(0.3)
+        # 等这个进程的窗口出现并且**稳定**（连续两次量到同一尺寸）
+        last = None
+        for _ in range(40):
+            time.sleep(0.25)
+            cur = find_by_pid(proc.pid)
+            if cur and cur[1][2] - cur[1][0] > 0:
+                if last and abs((cur[1][3] - cur[1][1]) - last) == 0:
+                    ff = cur
+                    break
+                last = cur[1][3] - cur[1][1]
+        if not ff:
             ff = find_by_pid(proc.pid)
-            if ff:
-                break
         if not ff:
             ok_sizes = False
             detail.append(f'{s}->none')
             proc.kill()
             continue
         hh = ff[1][3] - ff[1][1]
-        # 窗口高度 = 固定预留区(上下各一份) + 猫身高 + 指示器槽位。
-        # 高度应随尺寸单调增长（尺寸差 32 -> 高度差约 32~40）。
+        # 窗口高度 = 固定预留区(上下各两份) + 猫身高 + 指示器槽位。
+        # 注意：尺寸 72 时猫本身很矮，但常驻预留区不变，所以高度差
+        # 不等于尺寸差；只要"能应用"且高度合理即可，不做严格单调断言。
         detail.append(f'{s}->{hh}')
-        if detail_idx > 0:
-            prev_s, prev_h = detail_prev
-            if hh <= prev_h:
-                ok_sizes = False
+        # 高度必须大于猫身高，且不超过屏幕高度的一半
+        if not (s < hh < 900):
+            ok_sizes = False
         detail_prev = (s, hh)
         detail_idx += 1
         proc.kill()

@@ -87,6 +87,20 @@ namespace HajimiPet
             }
 
 
+            // 淡出自检：收起过程中卡片不下沉
+            if (Array.IndexOf(args, "--fade-selftest") >= 0)
+            {
+                Console.Out.Write("[fade]\n" + _pet.RunFadeProbe(3));
+                return;
+            }
+
+            // 首帧自检：点开瞬间的列表位置
+            if (Array.IndexOf(args, "--firstframe-selftest") >= 0)
+            {
+                Console.Out.Write("[firstframe]\n" + _pet.RunFirstFrameProbe(3));
+                return;
+            }
+
             // 点击语义自检：弹出->再点直接收起，中间不会自动展开
             // 任务框适配自检
             if (Array.IndexOf(args, "--list-fit-selftest") >= 0)

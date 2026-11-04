@@ -956,7 +956,11 @@ namespace HajimiPet
         /// <summary>绘制位置用：按**当前**展开度算，让卡片是从下往上长出来的。</summary>
         private int AnimatedListHeight()
         {
-            if (!_listOpen) return 0;
+            // 淡出过程中（_reveal 仍在衰减）也要返回真实高度。
+            // 之前写成 if (!_listOpen) return 0，于是关闭的瞬间这个值变 0，
+            // listTop = catY + offY - 0 - pad，整摞下移了约一整个摞高，
+            // 看起来就是"一直下降到盖住桌宠才消失"（用户反馈的现象）。
+            if (!_listOpen && _reveal <= 0.002f) return 0;
             int count = Math.Min(_active.Count, StackLayout.MaxCards);
             if (count <= 0) return 0;
             if (_stack.Rows != count) _stack.SetRows(count);
@@ -1279,7 +1283,22 @@ namespace HajimiPet
 
             // 布局完成，记录这次是按"气泡可见/不可见"哪种状态算的宽度
             _bubbleLaidOut = BubbleVisible();
+
+            // 尺寸刚变过就立刻重绘一次。
+            //
+            // 为什么必须有这句：SetBounds 之后窗口马上变宽（128 -> 512），
+            // 但画布内容还是上一次的（128 宽、列表画在左侧），
+            // 系统会先把旧内容显示出来。等下一次 Tick（16ms 后）才更新，
+            // 用户就看到"卡片先出现在很左侧，然后才飞回头顶"。
+            // 这里同步重绘，让"变宽"和"内容"在同一帧完成。
+            if (Width != _lastRenderedW || Height != _lastRenderedH)
+            {
+                Render();
+            }
         }
+
+        private int _lastRenderedW;
+        private int _lastRenderedH;
 
         private Bitmap _canvas;   // 复用画布，避免每帧分配新 Bitmap
 
@@ -1298,6 +1317,8 @@ namespace HajimiPet
 
             DrawScene(_canvas, w, h);
             ApplyLayered(_canvas, w, h);
+            _lastRenderedW = w;
+            _lastRenderedH = h;
         }
 
         /// <summary>把整个桌宠场景画进 canvas。实时渲染与自检导图共用这一份。</summary>
@@ -2760,6 +2781,134 @@ namespace HajimiPet
             _revealVel = 0f;
             return sb.ToString() + (ok ? "PASS" : "FAIL")
                 + " 非拖动操作不改变桌宠位置";
+        }
+
+        /// <summary>
+        /// 自检：模拟"点小圆点"后**第一帧**的渲染，直接报告画布尺寸与列表位置。
+        /// 用户反馈的第一个 bug 是"卡片先出现在很左侧"，说明首帧用了错误的宽度。
+        /// </summary>
+        /// <summary>
+        /// 自检：收起的整段淡出过程中，卡片底边必须一直贴着猫头顶，
+        /// 不能一路下沉到盖住猫才消失（用户反馈的新问题）。
+        /// </summary>
+        public string RunFadeProbe(int rows)
+        {
+            DebugActiveOverride = rows;
+            ForceHover = true;
+            _morph = 1f;
+            _listOpen = true;
+            _listExpanded = false;
+            _listSpaceAllocated = true;
+            _listHeightHold = false;
+            _dragging = false;
+            _catAnchorValid = false;
+            Poll();
+            ApplyLayout();
+
+            _stack.SetRows(Math.Min(rows, StackLayout.MaxCards));
+            _stack.SnapSpread(0f);
+            _reveal = 1f;
+            _revealVel = 0f;
+
+            var sb = new System.Text.StringBuilder();
+            bool ok = true;
+
+            // 基准：完全显示时的底边位置
+            using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
+                PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, Width, Height);
+            }
+            int baseBottom = _lastListRect.Y + _lastListRect.Height;
+            int catTopY = CatYInWindow(ListAreaFor(_active.Count), PetSize,
+                                       _activeCount > 0 ? IndicatorSlotH : 0);
+            sb.Append("基准 底边y=").Append(baseBottom)
+              .Append(" 猫头顶y=").Append(catTopY).Append('\n');
+
+            // 关闭：走淡出
+            CloseList();
+
+            for (int i = 0; i < 40; i++)
+            {
+                StepReveal(0.016f);
+                if (_reveal <= 0.002f) break;
+
+                using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
+                    PixelFormat.Format32bppArgb))
+                {
+                    DrawScene(b, Width, Height);
+                }
+                int bottom = _lastListRect.Y + _lastListRect.Height;
+                int drift = bottom - baseBottom;
+                if (i < 5 || i == 39)
+                {
+                    sb.Append("  帧").Append(i).Append(" reveal=")
+                      .Append(_reveal.ToString("0.00"))
+                      .Append(" 底边y=").Append(bottom)
+                      .Append(" 相对基准=").Append(drift).Append("px\n");
+                }
+                // 允许淡出下滑 10px（RevealSlidePx），超出就是在往下沉
+                if (drift > 14) ok = false;
+            }
+
+            _listOpen = false;
+            _reveal = 0f;
+            _revealVel = 0f;
+            return sb.ToString() + (ok ? "PASS" : "FAIL")
+                + " 淡出过程中卡片不下沉";
+        }
+
+        public string RunFirstFrameProbe(int rows)
+        {
+            DebugActiveOverride = rows;
+            ForceHover = true;
+            _morph = 1f;
+            _reveal = 0f;
+            _revealVel = 0f;
+            _listOpen = false;
+            _listExpanded = false;
+            _listSpaceAllocated = false;
+            _listHeightHold = false;
+            _dragging = false;
+            _catAnchorValid = false;
+            Poll();
+            ApplyLayout();
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append("点开前 窗口=").Append(Width).Append('x').Append(Height)
+              .Append(" ClientSize=").Append(ClientSize.Width).Append('x')
+              .Append(ClientSize.Height).Append('\n');
+
+            // 完全复刻 OnMouseDown -> ToggleList 的路径
+            ToggleList();
+
+            sb.Append("点开后 窗口=").Append(Width).Append('x').Append(Height)
+              .Append(" ClientSize=").Append(ClientSize.Width).Append('x')
+              .Append(ClientSize.Height).Append('\n');
+
+            // 和 Render 一样的方式渲染首帧
+            int w = ClientSize.Width;
+            int h = ClientSize.Height;
+            using (Bitmap b = new Bitmap(Math.Max(1, w), Math.Max(1, h),
+                PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, w, h);
+            }
+
+            int catCx = CatLeftInWindow(w) + (int)(PetSize * 0.817f) / 2;
+            int listCx = _lastListRect.X + _lastListRect.Width / 2;
+            sb.Append("首帧 画布=").Append(w).Append('x').Append(h)
+              .Append(" 猫中心=").Append(catCx)
+              .Append(" 列表中心=").Append(listCx)
+              .Append(" 偏差=").Append(listCx - catCx).Append("px\n");
+
+            bool ok = Math.Abs(listCx - catCx) <= 6;
+
+            _listOpen = false;
+            _reveal = 0f;
+            _revealVel = 0f;
+            return sb.ToString() + (ok ? "PASS" : "FAIL")
+                + " 点开首帧列表已对准猫头顶";
         }
 
         /// <summary>
