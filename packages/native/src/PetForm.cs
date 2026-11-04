@@ -1399,9 +1399,17 @@ namespace HajimiPet
                 int listTop = 0;
                 int listCx = catX + catW / 2;   // 卡片摞中心，默认与猫中心对齐
 
-                if (stackH > 0)
+                // 判断"要不要摆到目标位置"必须用**列表是否在显示**，
+                // 不能用 stackH > 0：刚点开的那一帧 _stack.Spread 还是 0，
+                // AnimatedListHeight() 返回 0，于是这一帧卡片被画在
+                // 默认值（窗口左上角附近），下一帧才跳回头顶 ——
+                // 这就是用户看到的"先出现在很左侧再飞过来"。
+                if (_listOpen || _reveal > 0.002f)
                 {
-                    // 摞底边相对猫头顶的位置：负值 = 在头顶上方
+                    // _listOffY 表示"摞底边相对猫头顶"（负值 = 在头顶上方）。
+                    // 底边固定在猫头顶附近不动，顶部由当前摞高反推 ——
+                    // 展开时摞变高、整摞向上生长，收回时向下收拢，
+                    // 底边始终贴着猫头顶，这才是自然的动效。
                     int stackBottomY = catY + (int)Math.Round(_listOffY);
                     listTop = stackBottomY - stackH - ListTopPad;
                     listCx = catX + catW / 2 + (int)Math.Round(_listOffX);
@@ -2291,6 +2299,15 @@ namespace HajimiPet
                 _listSpaceAllocated = true;
                 _listHeightHold = false;   // 初始是堆叠态，用紧凑高度
                 Reflow();
+
+                // 偏移量**立刻**摆到目标位置，不要让弹簧从上一轮的残留值追过来。
+                // 否则点开的第一帧卡片还在旧坐标（很左侧/很上方），
+                // 下一帧才飞回头顶 —— 用户看到的两次"闪现"都是这个。
+                UpdateListTarget();
+                _listOffX = _listTarX;
+                _listOffY = _listTarY;
+                _listOffXVel = 0f;
+                _listOffYVel = 0f;
                 return;
             }
 
@@ -2745,6 +2762,114 @@ namespace HajimiPet
                 + " 非拖动操作不改变桌宠位置";
         }
 
+        /// <summary>
+        /// 自检：点开 / 收回列表时，第一帧的卡片位置必须已经是正确位置，
+        /// 不能先出现在别处再飞过来。
+        ///
+        /// 用户反馈的两个闪现：
+        ///   - 点圆点后卡片先出现在很左侧，再飞回头顶
+        ///   - 收起时卡片先跳到很上方，再落回堆叠位置
+        /// </summary>
+        public string RunListJumpProbe(int rows)
+        {
+            DebugActiveOverride = rows;
+            ForceHover = true;
+            _morph = 1f;
+            _reveal = 0f;
+            _revealVel = 0f;
+            _listOpen = false;
+            _listExpanded = false;
+            _listSpaceAllocated = false;
+            _listHeightHold = false;
+            _dragging = false;
+            _catAnchorValid = false;
+            Poll();
+            ApplyLayout();
+
+            Rectangle work = Screen.PrimaryScreen.WorkingArea;
+            SetBounds(work.Left + (work.Width - Width) / 2,
+                      work.Top + (work.Height - Height) / 2, Width, Height);
+            SetCatAnchorFromWindow();
+
+            var sb = new System.Text.StringBuilder();
+            bool ok = true;
+
+            // ---- 1) 点开列表，检查第一帧 ----
+            ToggleList();
+
+            // 期望值必须在**点开之后**算：窗口已从 128 变成 512，
+            // 猫在窗口内的位置随之改变。
+            int catXInWin = CatLeftInWindow(Width);
+            int expectedCx = catXInWin + (int)(PetSize * 0.817f) / 2;
+
+            // 立刻（不推进任何动画）渲染一帧
+            using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
+                PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, Width, Height);
+            }
+            int firstLx = _lastListRect.X;
+            int firstCx = firstLx + _lastListRect.Width / 2;
+            int driftX = firstCx - expectedCx;
+
+            sb.Append("点开首帧: 列表中心=").Append(firstCx)
+              .Append(" 期望=").Append(expectedCx)
+              .Append(" 横向偏差=").Append(driftX).Append("px\n");
+            if (Math.Abs(driftX) > 6) ok = false;
+
+            // 收敛后应稳定在同一位置
+            for (int i = 0; i < 300; i++) { StepReveal(0.016f); StepListOffset(0.016f); }
+            using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
+                PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, Width, Height);
+            }
+            int settledCx = _lastListRect.X + _lastListRect.Width / 2;
+            int settledTop = _lastListRect.Y;
+            sb.Append("收敛后:   列表中心=").Append(settledCx)
+              .Append(" 顶部y=").Append(settledTop).Append("\n");
+            if (Math.Abs(settledCx - expectedCx) > 6) ok = false;
+
+            // ---- 2) 展开，再检查收回时首帧纵向位置 ----
+            _listExpanded = true;
+            _listHeightHold = true;
+            _stack.SetSpread(true);
+            for (int i = 0; i < 300; i++) { StepListOffset(0.016f); _stack.Step(0.016f); }
+
+            using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
+                PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, Width, Height);
+            }
+            int expandedTop = _lastListRect.Y;
+            int expandedBottom = _lastListRect.Y + _lastListRect.Height;
+
+            // 收回到堆叠（对应点箭头时的第一段动作）
+            _listExpanded = false;
+            _stack.SetSpread(false);
+            StepListOffset(0.016f);
+
+            using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
+                PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, Width, Height);
+            }
+            int collapsingBottom = _lastListRect.Y + _lastListRect.Height;
+            int dy = collapsingBottom - expandedBottom;
+
+            sb.Append("展开时 底部y=").Append(expandedBottom)
+              .Append("  收回首帧 底部y=").Append(collapsingBottom)
+              .Append("  底边位移=").Append(dy).Append("px\n");
+            // 底边应当保持在猫头顶附近（位移极小），不能跳
+            if (Math.Abs(dy) > 12) ok = false;
+
+            _listOpen = false;
+            _reveal = 0f;
+            _revealVel = 0f;
+            return sb.ToString() + (ok ? "PASS" : "FAIL")
+                + " 列表首帧即在正确位置，无闪现";
+        }
+
         public string RunClickProbe(int rows)
         {
             DebugActiveOverride = rows;
@@ -2972,8 +3097,16 @@ namespace HajimiPet
         /// </summary>
         private void UpdateListTarget()
         {
-            int stackH = AnimatedListHeight();
-            if (stackH <= 0)
+            // 只有列表真的在显示（打开中或淡出中）才有目标位置。
+            if (!_listOpen && _reveal <= 0.002f)
+            {
+                _listTarX = 0f;
+                _listTarY = -(ListBottomGap + 4);
+                return;
+            }
+
+            int rowsNow = Math.Min(_active.Count, StackLayout.MaxCards);
+            if (rowsNow <= 0)
             {
                 _listTarX = 0f;
                 _listTarY = -(ListBottomGap + 4);
@@ -2982,29 +3115,24 @@ namespace HajimiPet
 
             int catW = (int)(PetSize * 0.817f);
             int catH = PetSize;
-            int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
             int catYInWin = ListAreaFor(_active.Count);
 
             // 猫在屏幕上的位置
             int catX = Left + CatLeftInWindow(Width);
             int catTop = Top + catYInWin;
             int catCx = catX + catW / 2;
-            int catBottom = catTop + catH;
 
             Screen screen = Screen.FromPoint(new Point(catCx, catTop + catH / 2));
             Rectangle work = screen.WorkingArea;
 
-            int totalH = stackH + ListTopPad;
-
             // ---- 纵向：默认在头顶上方；上方放不下就翻到下方 ----
-            // offY 表示"卡片摞**底边**"相对猫头顶的偏移：
-            //   上方 = -ListBottomGap（底边贴在头顶上方一点）
-            //   下方 = catH + ListBottomGap（底边落到猫脚下方一点）
+            // offY 表示"卡片摞**底边**"相对猫头顶的偏移。
             //
-            // 判断"放不放得下"要用**展开后**的高度，不能用当前动画高度：
-            // 窗口按展开高度预留，若按堆叠小高度判断会出现"算出放得下、
-            // 实际展开后超出屏幕"（贴下时的失败就是这个）。
-            int rowsNow = Math.Min(_active.Count, StackLayout.MaxCards);
+            // 关键：**一律按展开后的高度算**，不用当前动画高度。
+            // 之前用 AnimatedListHeight()（随 _stack.Spread 变化），
+            // 目标位置在展开/收回动画中一直是变的，弹簧不停追 ——
+            // 于是"刚打开时列表先出现在很左侧、再飞回头顶"，
+            // "收回时先跳到很上方、再落回原位"（用户反馈的两个闪现）。
             int fullH = StackLayout.ExpandedHeight(rowsNow) + ListTopPad;
 
             float offAbove = -ListBottomGap;

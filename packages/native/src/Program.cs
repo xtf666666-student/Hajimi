@@ -102,6 +102,13 @@ namespace HajimiPet
                 return;
             }
 
+            // 列表闪现自检：首帧位置必须正确
+            if (Array.IndexOf(args, "--list-jump-selftest") >= 0)
+            {
+                Console.Out.Write("[listjump]\n" + _pet.RunListJumpProbe(3));
+                return;
+            }
+
             if (Array.IndexOf(args, "--click-selftest") >= 0)
             {
                 Console.Out.Write("[click]\n" + _pet.RunClickProbe(3));
