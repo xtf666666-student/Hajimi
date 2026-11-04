@@ -902,7 +902,13 @@ namespace HajimiPet
 
                 if (newLeft != Left || newTop != Top || oldW != w || oldH != h)
                 {
-                    SetBounds(newLeft, newTop, w, h);
+                    // 先按**新尺寸**画好，再一次性提交「位置 + 尺寸 + 内容」。
+                    //
+                    // 不能只调 SetBounds：它只改窗口矩形，位图还是旧的，
+                    // 系统会立刻把旧内容贴到新坐标 —— 用户看到"整只桌宠
+                    // 向左闪一下的残影"就是这个（128 宽的旧图贴到 512 窗口）。
+                    int w0 = w, h0 = h;
+                    UseLayeredResize(newLeft, newTop, w0, h0);
                 }
             }
             else
@@ -917,6 +923,81 @@ namespace HajimiPet
             // 用户要求"除了拖拽，任何操作都不许改变桌宠位置"。
             // 钳制会在窗口变大时把猫推回屏幕内 —— 那就是变相移动。
             // 只有拖动（OnMouseMove）才允许写 Left/Top。
+        }
+
+        // ---- 分层窗口的尺寸/位置切换 ----
+        //
+        // 不用 SetBounds：它只改窗口的位置和尺寸，**位图内容还是旧的**。
+        // 系统会立刻把旧内容按新坐标画出来 —— 用户看到"桌宠整体向左闪一下"
+        // 的残影就是这个（128 宽的旧图被贴到 512 宽的窗口左上角）。
+        //
+        // 正确做法是把"新位置 + 新尺寸 + 新内容"用一次 UpdateLayeredWindow
+        // 提交，中间不存在"旧内容配新窗口"的状态。
+        private Point _layeredPos;
+        private Size _layeredSize;
+        private bool _layeredDirty;
+        private bool _layeredInit;
+
+        private void UseLayeredResize(int left, int top, int w, int h)
+        {
+            // 关键：整个"改尺寸 + 换内容"的过程必须让系统看不到中间帧。
+            //
+            // SetBounds 会让窗口矩形立刻变成新的大小/位置，而位图还是旧的
+            // （128 宽的旧图），系统就会在这短暂窗口里把旧内容画出来 ——
+            // 用户看到"整只桌宠向左闪一下的残影"。
+            //
+            // 做法：
+            //   1) 先按新尺寸把位图画好（此时窗口还是旧尺寸，画在离屏位图里）
+            //   2) 把窗口矩形改到位
+            //   3) 立刻提交新位图
+            // 全程用 WM_SETREDRAW 抑制中间绘制，系统一次都没机会画旧内容。
+            int w0 = w, h0 = h;
+            RenderInto(w0, h0);                 // 1) 离屏画好
+
+            SendMessage(Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+            try
+            {
+                SetBounds(left, top, w0, h0);   // 2) 改窗口矩形
+                ApplyLayeredAt(_canvas, left, top, w0, h0);   // 3) 提交新内容
+            }
+            finally
+            {
+                SendMessage(Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                Invalidate();
+            }
+
+            _lastRenderedW = w0;
+            _lastRenderedH = h0;
+        }
+
+        private const int WM_SETREDRAW = 0x000B;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        /// <summary>把场景画进 _canvas（不动窗口，不提交）。</summary>
+        private void RenderInto(int w, int h)
+        {
+            if (w <= 0 || h <= 0) return;
+            if (_canvas == null || _canvas.Width != w || _canvas.Height != h)
+            {
+                Bitmap old = _canvas;
+                _canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                if (old != null) old.Dispose();
+            }
+            DrawScene(_canvas, w, h);
+        }
+
+        private void Render()
+        {
+            int w = ClientSize.Width;
+            int h = ClientSize.Height;
+            if (w <= 0 || h <= 0) return;
+
+            RenderInto(w, h);
+            ApplyLayeredAt(_canvas, Left, Top, w, h);
+            _lastRenderedW = w;
+            _lastRenderedH = h;
         }
 
         // 脚底下方指示器占位：三种形态都用同一个槽位高度，切换时不跳
@@ -1283,43 +1364,12 @@ namespace HajimiPet
 
             // 布局完成，记录这次是按"气泡可见/不可见"哪种状态算的宽度
             _bubbleLaidOut = BubbleVisible();
-
-            // 尺寸刚变过就立刻重绘一次。
-            //
-            // 为什么必须有这句：SetBounds 之后窗口马上变宽（128 -> 512），
-            // 但画布内容还是上一次的（128 宽、列表画在左侧），
-            // 系统会先把旧内容显示出来。等下一次 Tick（16ms 后）才更新，
-            // 用户就看到"卡片先出现在很左侧，然后才飞回头顶"。
-            // 这里同步重绘，让"变宽"和"内容"在同一帧完成。
-            if (Width != _lastRenderedW || Height != _lastRenderedH)
-            {
-                Render();
-            }
         }
 
         private int _lastRenderedW;
         private int _lastRenderedH;
 
         private Bitmap _canvas;   // 复用画布，避免每帧分配新 Bitmap
-
-        private void Render()
-        {
-            int w = ClientSize.Width;
-            int h = ClientSize.Height;
-            if (w <= 0 || h <= 0) return;
-
-            if (_canvas == null || _canvas.Width != w || _canvas.Height != h)
-            {
-                Bitmap old = _canvas;
-                _canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-                if (old != null) old.Dispose();
-            }
-
-            DrawScene(_canvas, w, h);
-            ApplyLayered(_canvas, w, h);
-            _lastRenderedW = w;
-            _lastRenderedH = h;
-        }
 
         /// <summary>把整个桌宠场景画进 canvas。实时渲染与自检导图共用这一份。</summary>
         private void DrawScene(Bitmap canvas, int w, int h)
@@ -2057,7 +2107,8 @@ namespace HajimiPet
 
         // ---------------- Present to the layered window ----------------
 
-        private void ApplyLayered(Bitmap canvas, int w, int h)
+        /// <summary>把画布按指定屏幕位置提交到分层窗口。</summary>
+        private void ApplyLayeredAt(Bitmap canvas, int left, int top, int w, int h)
         {
             IntPtr screenDc = GetDC(IntPtr.Zero);
             IntPtr memDc = CreateCompatibleDC(screenDc);
@@ -2068,7 +2119,7 @@ namespace HajimiPet
                 hBitmap = canvas.GetHbitmap(Color.FromArgb(0));
                 oldBitmap = SelectObject(memDc, hBitmap);
 
-                POINT dst = new POINT { X = Left, Y = Top };
+                POINT dst = new POINT { X = left, Y = top };
                 SIZE size = new SIZE { cx = w, cy = h };
                 POINT src = new POINT { X = 0, Y = 0 };
                 BLENDFUNCTION blend = new BLENDFUNCTION
@@ -2319,16 +2370,21 @@ namespace HajimiPet
                 // 立刻给列表分配窗口高度（只改一次尺寸），不留给下一帧
                 _listSpaceAllocated = true;
                 _listHeightHold = false;   // 初始是堆叠态，用紧凑高度
-                Reflow();
 
-                // 偏移量**立刻**摆到目标位置，不要让弹簧从上一轮的残留值追过来。
-                // 否则点开的第一帧卡片还在旧坐标（很左侧/很上方），
-                // 下一帧才飞回头顶 —— 用户看到的两次"闪现"都是这个。
+                // 顺序很关键：**先**把偏移量摆到目标位置，**再** Reflow。
+                //
+                // Reflow 内部会在尺寸变化时立刻同步 Render（为了消除
+                // "窗口变宽但内容还是旧的"那一帧）。如果这时 _listOffX
+                // 还是上一轮的残留值，那一帧就会把卡片画在很左边 ——
+                // 这就是用户反复看到的"点开后先从左侧闪现"。
+                // 之前是先 Reflow 再设偏移，正好踩中这个顺序陷阱。
                 UpdateListTarget();
                 _listOffX = _listTarX;
                 _listOffY = _listTarY;
                 _listOffXVel = 0f;
                 _listOffYVel = 0f;
+
+                Reflow();
                 return;
             }
 
@@ -2787,9 +2843,14 @@ namespace HajimiPet
         /// 自检：模拟"点小圆点"后**第一帧**的渲染，直接报告画布尺寸与列表位置。
         /// 用户反馈的第一个 bug 是"卡片先出现在很左侧"，说明首帧用了错误的宽度。
         /// </summary>
+                /// <summary>
+        /// 自检：逐步复刻真实点击序列，**每一步之后都渲染一次**，
+        /// 记录当时列表中心与猫中心的偏差。
+        /// 用来抓"点开后短暂出现在很左侧"的时序 bug。
+        /// </summary>
         /// <summary>
         /// 自检：收起的整段淡出过程中，卡片底边必须一直贴着猫头顶，
-        /// 不能一路下沉到盖住猫才消失（用户反馈的新问题）。
+        /// 不能一路下沉到盖住猫才消失。
         /// </summary>
         public string RunFadeProbe(int rows)
         {
@@ -2813,19 +2874,14 @@ namespace HajimiPet
             var sb = new System.Text.StringBuilder();
             bool ok = true;
 
-            // 基准：完全显示时的底边位置
             using (Bitmap b = new Bitmap(Math.Max(1, Width), Math.Max(1, Height),
                 PixelFormat.Format32bppArgb))
             {
                 DrawScene(b, Width, Height);
             }
             int baseBottom = _lastListRect.Y + _lastListRect.Height;
-            int catTopY = CatYInWindow(ListAreaFor(_active.Count), PetSize,
-                                       _activeCount > 0 ? IndicatorSlotH : 0);
-            sb.Append("基准 底边y=").Append(baseBottom)
-              .Append(" 猫头顶y=").Append(catTopY).Append('\n');
+            sb.Append("基准 底边y=").Append(baseBottom).Append('\n');
 
-            // 关闭：走淡出
             CloseList();
 
             for (int i = 0; i < 40; i++)
@@ -2840,22 +2896,20 @@ namespace HajimiPet
                 }
                 int bottom = _lastListRect.Y + _lastListRect.Height;
                 int drift = bottom - baseBottom;
-                if (i < 5 || i == 39)
+                if (i < 5)
                 {
                     sb.Append("  帧").Append(i).Append(" reveal=")
                       .Append(_reveal.ToString("0.00"))
                       .Append(" 底边y=").Append(bottom)
                       .Append(" 相对基准=").Append(drift).Append("px\n");
                 }
-                // 允许淡出下滑 10px（RevealSlidePx），超出就是在往下沉
                 if (drift > 14) ok = false;
             }
 
             _listOpen = false;
             _reveal = 0f;
             _revealVel = 0f;
-            return sb.ToString() + (ok ? "PASS" : "FAIL")
-                + " 淡出过程中卡片不下沉";
+            return sb.ToString() + (ok ? "PASS" : "FAIL") + " 淡出过程中卡片不下沉";
         }
 
         public string RunFirstFrameProbe(int rows)
@@ -2875,41 +2929,59 @@ namespace HajimiPet
             ApplyLayout();
 
             var sb = new System.Text.StringBuilder();
-            sb.Append("点开前 窗口=").Append(Width).Append('x').Append(Height)
-              .Append(" ClientSize=").Append(ClientSize.Width).Append('x')
-              .Append(ClientSize.Height).Append('\n');
+            bool ok = true;
 
-            // 完全复刻 OnMouseDown -> ToggleList 的路径
-            ToggleList();
-
-            sb.Append("点开后 窗口=").Append(Width).Append('x').Append(Height)
-              .Append(" ClientSize=").Append(ClientSize.Width).Append('x')
-              .Append(ClientSize.Height).Append('\n');
-
-            // 和 Render 一样的方式渲染首帧
-            int w = ClientSize.Width;
-            int h = ClientSize.Height;
-            using (Bitmap b = new Bitmap(Math.Max(1, w), Math.Max(1, h),
-                PixelFormat.Format32bppArgb))
+            // 记录一帧的偏差
+            Func<string, bool> snap = (label) =>
             {
-                DrawScene(b, w, h);
-            }
+                int w = ClientSize.Width;
+                int h = ClientSize.Height;
+                if (w <= 0 || h <= 0) return true;
 
-            int catCx = CatLeftInWindow(w) + (int)(PetSize * 0.817f) / 2;
-            int listCx = _lastListRect.X + _lastListRect.Width / 2;
-            sb.Append("首帧 画布=").Append(w).Append('x').Append(h)
-              .Append(" 猫中心=").Append(catCx)
-              .Append(" 列表中心=").Append(listCx)
-              .Append(" 偏差=").Append(listCx - catCx).Append("px\n");
+                using (Bitmap b = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+                {
+                    DrawScene(b, w, h);
+                }
+                int catCx = CatLeftInWindow(w) + (int)(PetSize * 0.817f) / 2;
+                int listCx = _lastListRect.X + _lastListRect.Width / 2;
+                int drift = listCx - catCx;
 
-            bool ok = Math.Abs(listCx - catCx) <= 6;
+                sb.Append("  ").Append(label).Append(": 画布=").Append(w)
+                  .Append("x").Append(h)
+                  .Append(" 猫中心=").Append(catCx)
+                  .Append(" 列表中心=").Append(listCx)
+                  .Append(" 偏差=").Append(drift).Append("px\n");
+                // 列表还没显示时（_lastListRect 为空）不算偏差
+                if (_lastListRect.Width > 0 && Math.Abs(drift) > 6) return false;
+                return true;
+            };
+
+            ok &= snap("点开前");
+
+            // 完全复刻 ToggleList 的内部步骤，每步都看一帧
+            _listOpen = true;                       ok &= snap("置 _listOpen=true");
+            int count = Math.Min(_active.Count, StackLayout.MaxCards);
+            _stack.SetRows(count);                  ok &= snap("SetRows");
+            _stack.SnapSpread(0f);                  ok &= snap("SnapSpread(0)");
+            _stack.SetSpread(false);                ok &= snap("SetSpread(false)");
+            _reveal = 0f; _revealVel = 0f;          ok &= snap("reveal=0");
+            _listSpaceAllocated = true;             ok &= snap("spaceAllocated");
+            _listHeightHold = false;                ok &= snap("heightHold=false");
+            UpdateListTarget();                     ok &= snap("UpdateListTarget");
+            _listOffX = _listTarX;
+            _listOffY = _listTarY;
+            _listOffXVel = 0f;
+            _listOffYVel = 0f;                      ok &= snap("偏移归位");
+            Reflow();                               ok &= snap("Reflow");
 
             _listOpen = false;
             _reveal = 0f;
             _revealVel = 0f;
+            _listExpanded = false;
             return sb.ToString() + (ok ? "PASS" : "FAIL")
-                + " 点开首帧列表已对准猫头顶";
+                + " 点开全过程每一帧列表都对准猫头顶";
         }
+
 
         /// <summary>
         /// 自检：点开 / 收回列表时，第一帧的卡片位置必须已经是正确位置，
