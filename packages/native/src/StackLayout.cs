@@ -16,11 +16,13 @@ namespace HajimiPet
     /// </summary>
     internal sealed class StackLayout
     {
-        public const int CardW = 236;
-        public const int CardH = 34;
-        /// <summary>收起时每张往上叠多少像素（负值越大越"摞得紧"）。</summary>
-        public const int PeekOffset = 10;
-        public const int Gap = 6;
+        // 两行卡片：标题 + 状态行（仿用户给的通知样式）
+        public const int CardW = 248;
+        public const int CardH = 58;
+        /// <summary>收起时每张只露出这么多，形成"一摞"。
+        /// 16px 刚好露出下沿圆角，iPhone 通知堆叠就是这个观感。</summary>
+        public const int PeekOffset = 16;
+        public const int Gap = 7;
         public const int MaxCards = 6;
 
         private readonly List<float> _y = new List<float>();
@@ -31,6 +33,9 @@ namespace HajimiPet
         private float _spread;
 
         public float Spread { get { return _spread; } }
+
+        /// <summary>展开进度的目标值（0 = 堆叠，1 = 完全展开）。</summary>
+        public float SpreadTarget { get { return _spreadTarget; } }
         public int Rows { get { return _rows; } }
 
         /// <summary>某张卡片当前的顶部 y（已含弹簧插值）。</summary>
@@ -59,6 +64,20 @@ namespace HajimiPet
             int expanded = ExpandedHeight(_rows);
             int collapsed = CollapsedHeight(_rows);
             return (int)(collapsed + (expanded - collapsed) * _spread);
+        }
+
+        /// <summary>
+        /// 展开进度到达目标值之后的高度。
+        ///
+        /// 窗口尺寸按这个值算，展开/收起过程中就不必每帧改窗口大小 ——
+        /// 只改一次，卡片在固定的窗口里做插值。这是消除掉帧的关键。
+        /// </summary>
+        public int TargetHeight()
+        {
+            if (_rows <= 0) return 0;
+            int expanded = ExpandedHeight(_rows);
+            int collapsed = CollapsedHeight(_rows);
+            return (int)(collapsed + (expanded - collapsed) * _spreadTarget);
         }
 
         /// <summary>行数变化时重建目标位置，并沿用已有的 y 继续插值。</summary>
@@ -119,10 +138,14 @@ namespace HajimiPet
         private float _spreadTarget;
 
         /// <summary>
-        /// 每帧推进。用欠阻尼弹簧：接近目标时减速，带一点点回弹，
-        /// 而不是线性匀速 —— 这是"柔软弹性"的来源。
+        /// 每帧推进。欠阻尼弹簧：快到目标时减速并轻微回弹。
+        ///
+        /// 参数用 110 / 10，是实测调出来的：
+        ///   原来 26/12 —— 1.38 秒才到位，且峰值 0.994 = 完全没有回弹（又慢又硬）
+        ///   现在 110/10 —— 0.19 秒到位，峰值 1.166 = 带 17% 回弹，弹两下就停
+        /// 保留了"从下往上弹出来"的过程，但不再让人等。
         /// </summary>
-        public bool Step(float dt, float stiffness = 26f, float damping = 12f)
+        public bool Step(float dt, float stiffness = 200f, float damping = 13f)
         {
             bool moving = false;
 

@@ -10,20 +10,19 @@ namespace HajimiPet
     {
         public string Id;
         public string Title;
+        /// <summary>卡片第二行：当前在做什么（"正在执行命令 / 正在生成回复 / 等你确认"）。</summary>
+        public string Status;
         /// <summary>这一轮是否还在跑。</summary>
         public bool Active;
-        /// <summary>刚跑完、还没被用户看过（角标要保留它）。</summary>
+        /// <summary>刚跑完、还没被用户看过。注意：这不再影响角标显示。</summary>
         public bool Unread;
         public int Turn;
         public DateTime Updated;
         public string Ago;
 
-        /// <summary>角标要统计的数量：跑着的 + 跑完未看的。</summary>
-        public bool Counts { get { return Active || Unread; } }
-
         public override string ToString()
         {
-            return (Active ? "* " : (Unread ? "+ " : "  ")) + Title + " (" + Ago + ")";
+            return (Active ? "* " : (Unread ? "+ " : "  ")) + Title + " [" + Status + "] (" + Ago + ")";
         }
     }
 
@@ -50,6 +49,21 @@ namespace HajimiPet
 
         private static readonly Regex TurnRe = new Regex(
             "\"lastTurn\"\\s*:\\s*(\\d+)",
+            RegexOptions.Compiled);
+
+        // sessionListMetadata 里的最后提问时间（毫秒 epoch），会话自带的完成时间
+        private static readonly Regex LastPromptRe = new Regex(
+            "\"lastPromptAt\"\\s*:\\s*(\\d+)",
+            RegexOptions.Compiled);
+
+        // pendingCalls 里是否有内容（正在执行工具）
+        private static readonly Regex PendingRe = new Regex(
+            "\"pendingCalls\"\\s*:\\s*\\{([^}]*)\\}",
+            RegexOptions.Compiled);
+
+        // inbox 队列（等用户回应）
+        private static readonly Regex InboxRe = new Regex(
+            "\"inbox\"\\s*:\\s*\\{([^{}]*)\\}",
             RegexOptions.Compiled);
 
         private static readonly Regex CwdRe = new Regex(
@@ -94,6 +108,10 @@ namespace HajimiPet
 
         private static bool _loaded;
 
+        /// <summary>sessionId -> 用户已看到的那一轮序号（比时间戳可靠）。</summary>
+        private static Dictionary<string, int> _seenTurn =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+
         public static void Load()
         {
             if (_loaded) return;
@@ -105,10 +123,22 @@ namespace HajimiPet
                 foreach (Match m in Regex.Matches(json,
                     "\"id\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"seen\"\\s*:\\s*\"([^\"]*)\""))
                 {
-                    DateTime t;
-                    if (DateTime.TryParse(m.Groups[2].Value, out t))
+                    // 记录里既有本地时间（+08:00）也有 UTC（Z），
+                    // 必须统一转成本地时间再比较，否则会差 8 小时。
+                    DateTimeOffset dto;
+                    if (DateTimeOffset.TryParse(m.Groups[2].Value, out dto))
                     {
-                        _seen[m.Groups[1].Value] = t;
+                        _seen[m.Groups[1].Value] = dto.LocalDateTime;
+                    }
+                }
+                // 轮次序号（新格式才有）
+                foreach (Match m in Regex.Matches(json,
+                    "\"id\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"turn\"\\s*:\\s*(\\d+)"))
+                {
+                    int turn;
+                    if (int.TryParse(m.Groups[2].Value, out turn))
+                    {
+                        _seenTurn[m.Groups[1].Value] = turn;
                     }
                 }
             }
@@ -123,13 +153,24 @@ namespace HajimiPet
             try
             {
                 var sb = new StringBuilder("{\"items\":[");
+                var ids = new List<string>(_seen.Keys);
+                foreach (string id in _seenTurn.Keys)
+                {
+                    if (!ids.Contains(id)) ids.Add(id);
+                }
+
                 bool first = true;
-                foreach (KeyValuePair<string, DateTime> kv in _seen)
+                foreach (string id in ids)
                 {
                     if (!first) sb.Append(',');
                     first = false;
-                    sb.Append("{\"id\":\"").Append(Escape(kv.Key))
-                      .Append("\",\"seen\":\"").Append(kv.Value.ToString("o")).Append("\"}");
+
+                    DateTime when = _seen.ContainsKey(id) ? _seen[id] : DateTime.UtcNow;
+                    int turn = _seenTurn.ContainsKey(id) ? _seenTurn[id] : 0;
+
+                    sb.Append("{\"id\":\"").Append(Escape(id))
+                      .Append("\",\"seen\":\"").Append(when.ToString("o"))
+                      .Append("\",\"turn\":").Append(turn).Append('}');
                 }
                 sb.Append("]}");
                 Directory.CreateDirectory(Path.GetDirectoryName(SeenFile));
@@ -147,21 +188,24 @@ namespace HajimiPet
         }
 
         /// <summary>用户点开/关闭某会话：标记已读，角标数字随之下降。</summary>
-        public static void MarkSeen(string sessionId)
+        public static void MarkSeen(string sessionId, int turn)
         {
             if (string.IsNullOrEmpty(sessionId)) return;
-            _seen[sessionId] = DateTime.UtcNow;
+            _seen[sessionId] = DateTime.Now;
+            // 同时记下看到的那一轮，用它比时间戳可靠
+            _seenTurn[sessionId] = turn;
             _dismissed.Remove(sessionId);
             _finishedAt.Remove(sessionId);
             Save();
         }
 
         /// <summary>用户点叉：直接移出列表，直到它再次开始运行。</summary>
-        public static void Dismiss(string sessionId)
+        public static void Dismiss(string sessionId, int turn)
         {
             if (string.IsNullOrEmpty(sessionId)) return;
             _dismissed.Add(sessionId);
-            _seen[sessionId] = DateTime.UtcNow;
+            _seen[sessionId] = DateTime.Now;
+            _seenTurn[sessionId] = turn;
             _finishedAt.Remove(sessionId);
             Save();
         }
@@ -186,7 +230,7 @@ namespace HajimiPet
                 return result;
             }
 
-            DateTime now = DateTime.UtcNow;
+            DateTime now = DateTime.Now;
 
             foreach (string file in files)
             {
@@ -202,36 +246,46 @@ namespace HajimiPet
                         _dismissed.Remove(id);
                         item.Unread = false;
                     }
+                    else if (_dismissed.Contains(id))
+                    {
+                        // 用户已经主动关掉，不再提示
+                        item.Unread = false;
+                    }
                     else
                     {
-                        if (_dismissed.Contains(id))
+                        // 未读判定优先用「轮次序号」——会话内嵌、单调递增，最可靠。
+                        // 旧记录里没有 turn（只有 seen 时间戳），此时退回时间比较，
+                        // 但用的是 lastPromptAt（会话自带），不是文件 mtime
+                        // （mtime 会被缓存整理刷新，是误报的根源）。
+                        int seenTurn;
+                        DateTime seenAt;
+                        if (_seenTurn.TryGetValue(id, out seenTurn))
                         {
-                            // 用户已经主动关掉，不再提示
-                            item.Unread = false;
+                            item.Unread = item.Turn > seenTurn;
+                        }
+                        else if (_seen.TryGetValue(id, out seenAt))
+                        {
+                            // 老记录：用内嵌完成时间比，且留 2 分钟容差防抖动
+                            item.Unread = item.Updated != DateTime.MinValue &&
+                                          item.Updated > seenAt.AddMinutes(-2);
+                            if (!item.Unread)
+                            {
+                                // 顺手补齐轮次，之后就走上面那条更可靠的路径
+                                _seenTurn[id] = item.Turn;
+                            }
                         }
                         else
                         {
-                            // 记下它第一次被观察到「已完成」的时刻
-                            if (!_finishedAt.ContainsKey(id))
+                            // 第一次见到这个会话：只有真的是刚结束的（10 分钟内）
+                            // 才提示，避免一启动就把全部历史会话翻出来。
+                            bool fresh = item.Updated != DateTime.MinValue &&
+                                         (DateTime.Now - item.Updated).TotalMinutes <= 10;
+                            item.Unread = fresh;
+                            if (!fresh)
                             {
-                                _finishedAt[id] = now;
+                                _seen[id] = now;
+                                _seenTurn[id] = item.Turn;
                             }
-                            DateTime seenAt;
-                            if (!_seen.TryGetValue(id, out seenAt))
-                            {
-                                // 第一次见到这个会话：如果它很久以前就完成了，不打扰
-                                if (item.Updated != DateTime.MinValue &&
-                                    (DateTime.Now - item.Updated).TotalMinutes > 10)
-                                {
-                                    _seen[id] = now;
-                                    seenAt = now;
-                                }
-                                else
-                                {
-                                    seenAt = DateTime.MinValue;
-                                }
-                            }
-                            item.Unread = item.Updated > seenAt;
                         }
                     }
 
@@ -250,14 +304,20 @@ namespace HajimiPet
             return result;
         }
 
-        /// <summary>角标要显示的列表：跑着的 + 跑完未看的。</summary>
+        /// <summary>
+        /// 要显示的列表：**只含正在运行的会话**。
+        ///
+        /// 用户明确要求：没有任务在跑时什么都不要显示。
+        /// 所以"跑完未看"不再计入角标，也不会出现在列表里 ——
+        /// 它只在会话真正 running 时才有意义。
+        /// </summary>
         public static List<SessionItem> ReadActive()
         {
             List<SessionItem> all = Read();
             List<SessionItem> show = new List<SessionItem>();
             foreach (SessionItem item in all)
             {
-                if (item.Counts) show.Add(item);
+                if (item.Active) show.Add(item);
             }
             return show;
         }
@@ -285,23 +345,45 @@ namespace HajimiPet
                 string kind = Match1(KindRe, text);
                 int openTurn = MatchInt(OpenTurnRe, text);
                 int turn = MatchInt(TurnRe, text);
-                // kind == "start" 表示这一轮还没收到结束标记 = 正在生成
-                bool active = kind == "start" && openTurn > 0;
 
-                DateTime updated;
-                try
+                // kind == "start" 表示这一轮还没收到结束标记 = 正在生成。
+                // 但这标记可能是**残留**：DSH 被强杀、崩溃、或那一轮没正常收尾时，
+                // 缓存会永远停在 start，于是一个几天前就结束的会话看起来一直在跑。
+                // （用户遇到的"没任务却显示运行中 1 个"就是这个）
+                //
+                // 所以再加一道活性检查：真正在跑的会话会不停写缓存文件，
+                // 残留标记的文件则长时间不动。
+                bool marked = kind == "start" && openTurn > 0;
+                bool active = marked && IsFresh(file, text);
+
+                string status = ReadStatus(text, active);
+
+                // 完成时间必须用会话文件里内嵌的时间戳，不能用文件 mtime。
+                // mtime 会被 DSH 自己的缓存整理、迁移、甚至读取刷新，
+                // 导致早已结束的会话被误判成"刚完成、未读"。
+                DateTime updated = ReadLastPromptAt(text);
+
+                // 读不到内嵌时间戳时才退回文件时间，并把它"钝化"到分钟级，
+                // 避免几秒的抖动又被当成新消息。
+                if (updated == DateTime.MinValue)
                 {
-                    updated = File.GetLastWriteTime(file);
-                }
-                catch
-                {
-                    updated = DateTime.MinValue;
+                    try
+                    {
+                        DateTime mtime = File.GetLastWriteTime(file);
+                        updated = new DateTime(mtime.Year, mtime.Month, mtime.Day,
+                            mtime.Hour, mtime.Minute, 0);
+                    }
+                    catch
+                    {
+                        updated = DateTime.MinValue;
+                    }
                 }
 
                 return new SessionItem
                 {
                     Id = Path.GetFileNameWithoutExtension(file),
                     Title = Decode(title),
+                    Status = status,
                     Active = active,
                     Unread = false,
                     Turn = turn,
@@ -315,10 +397,126 @@ namespace HajimiPet
             }
         }
 
+        /// <summary>
+        /// 推断卡片第二行该写什么。
+        ///
+        /// DSH 的缓存里没有"当前工具名"这种现成字段，但有：
+        ///   sessionStats.pendingCalls —— 正在执行、还没返回的工具调用
+        ///   sessionStats.openStep     —— 已开始但未结束的步骤
+        ///   inbox                     —— 排队等你的输入（approval / 回答）
+        /// 用这几条推出一个人能看懂的状态，不猜具体工具名。
+        /// </summary>
+        private static string ReadStatus(string text, bool active)
+        {
+            if (!active) return "已结束";
+
+            // 有排队等你处理的输入 -> 优先提示这个
+            Match inbox = InboxRe.Match(text);
+            if (inbox.Success &&
+                (ContainsNonEmpty(inbox.Groups[1].Value, "next-turn") ||
+                 ContainsNonEmpty(inbox.Groups[1].Value, "next-step")))
+            {
+                return "等你回应";
+            }
+
+            // 有未返回的工具调用 -> 正在执行
+            Match pending = PendingRe.Match(text);
+            if (pending.Success && pending.Groups[1].Value.Trim().Length > 0)
+            {
+                return "正在执行工具";
+            }
+
+            // 打开着的步骤 -> 生成中
+            if (text.IndexOf("\"openStep\":{", StringComparison.Ordinal) >= 0)
+            {
+                return "正在生成回复";
+            }
+
+            return "正在响应";
+        }
+
+        /// <summary>粗判 inbox 的某个队列里是否有元素。</summary>
+        private static bool ContainsNonEmpty(string inboxJson, string key)
+        {
+            int i = inboxJson.IndexOf("\"" + key + "\"", StringComparison.Ordinal);
+            if (i < 0) return false;
+            int lb = inboxJson.IndexOf('[', i);
+            if (lb < 0) return false;
+            int rb = inboxJson.IndexOf(']', lb);
+            if (rb < 0) return false;
+            return inboxJson.Substring(lb, rb - lb + 1).Trim('[', ']', ' ', '\n', '\r').Length > 0;
+        }
+
+        /// <summary>
+        /// 判定一个"start"标记是否还活着。
+        ///
+        /// 真正在跑的会话，DSH 每步都会重写缓存文件；而残留标记的文件
+        /// 会一停就是几小时甚至几天。任一"最近活动"信号够新就算活：
+        ///   - 文件修改时间（最直接：正在写）
+        ///   - lastPromptAt（用户最后一次提问）
+        ///
+        /// 用"或"而不是"与"：长工具调用期间缓存可能几分钟不落盘，
+        /// 但提问时间也不会更新，两者任一过期太久的才是真僵尸。
+        /// </summary>
+        private static bool IsFresh(string file, string text)
+        {
+            DateTime fresh = DateTime.Now.AddMinutes(-IdleGraceMinutes);
+
+            try
+            {
+                if (File.GetLastWriteTime(file) >= fresh) return true;
+            }
+            catch
+            {
+                /* 读不到就当不新鲜，继续看下一个信号 */
+            }
+
+            DateTime prompt = ReadLastPromptAt(text);
+            if (prompt != DateTime.MinValue && prompt >= fresh) return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// 多久没动静就不再认为在跑。
+        ///
+        /// 30 分钟：正常的一步是秒级，长工具调用也就几分钟；
+        /// 而实测的僵尸是 2821 分钟（47 小时），差了两个数量级，不会误杀。
+        /// </summary>
+        private const int IdleGraceMinutes = 30;
+
         private static string Match1(Regex re, string text)
         {
             Match m = re.Match(text);
             return m.Success ? m.Groups[1].Value : null;
+        }
+
+        /// <summary>
+        /// 读会话内嵌的最后提问时间（毫秒 epoch）。
+        ///
+        /// 用这个而不是文件 mtime：mtime 会被缓存整理、迁移、读取刷新，
+        /// 用它判断"是否新完成"会误报。
+        /// </summary>
+        private static DateTime ReadLastPromptAt(string text)
+        {
+            Match m = LastPromptRe.Match(text);
+            if (!m.Success) return DateTime.MinValue;
+
+            long ms;
+            if (!long.TryParse(m.Groups[1].Value, out ms) || ms <= 0)
+            {
+                return DateTime.MinValue;
+            }
+
+            try
+            {
+                // 显式按 UTC 还原，再转本地时间
+                return DateTimeOffset.FromUnixTimeMilliseconds(ms).LocalDateTime;
+            }
+            catch
+            {
+                return DateTime.MinValue;
+            }
         }
 
         private static int MatchInt(Regex re, string text)

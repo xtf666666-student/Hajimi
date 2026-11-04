@@ -71,6 +71,85 @@ namespace HajimiPet
                 if (args[i] == "--dump" && i + 1 < args.Length) dumpDir = args[i + 1];
             }
 
+
+            // 抖动自检：拖到边界后继续外拖，确认位置不再晃动
+            if (Array.IndexOf(args, "--jitter-selftest") >= 0)
+            {
+                Console.Out.Write("[jitter]\n" + _pet.RunJitterProbe());
+                return;
+            }
+
+            // 拖动限制自检：往四个方向推，确认推不出屏幕
+            if (Array.IndexOf(args, "--drag-selftest") >= 0)
+            {
+                Console.Out.Write("[drag]\n" + _pet.RunDragProbe());
+                return;
+            }
+
+
+            // 点击语义自检：弹出->再点直接收起，中间不会自动展开
+            // 任务框适配自检
+            if (Array.IndexOf(args, "--list-fit-selftest") >= 0)
+            {
+                Console.Out.Write("[listfit]\n" + _pet.RunListFitProbe());
+                return;
+            }
+
+            // 位置锚定自检：非拖动操作不得移动桌宠
+            if (Array.IndexOf(args, "--anchor-selftest") >= 0)
+            {
+                Console.Out.Write("[anchor]\n" + _pet.RunAnchorProbe(3));
+                return;
+            }
+
+            if (Array.IndexOf(args, "--click-selftest") >= 0)
+            {
+                Console.Out.Write("[click]\n" + _pet.RunClickProbe(3));
+                return;
+            }
+
+            // 收回过程自检：确认有渐隐中间帧，且窗口不会每帧改尺寸
+            if (Array.IndexOf(args, "--close-selftest") >= 0)
+            {
+                Console.Out.Write("[close]\n" + _pet.RunCloseProbe(3));
+                return;
+            }
+
+            // 动作速度自检：确认弹出/展开/收回/形态四个动作速度一致
+            if (Array.IndexOf(args, "--motion-selftest") >= 0)
+            {
+                Console.Out.Write("[motion]\n" + _pet.RunMotionProbe(3));
+                return;
+            }
+
+            // 气泡布局自检：验证说话时窗口会变宽、气泡不压桌宠
+            if (Array.IndexOf(args, "--bubble-selftest") >= 0)
+            {
+                Console.Out.Write("[bubble]\n" + _pet.RunBubbleProbe());
+                return;
+            }
+
+            // 形态弹簧自检：量化"细线 <-> 圆点"的过渡速度与回弹
+            if (Array.IndexOf(args, "--morph-selftest") >= 0)
+            {
+                Console.Out.Write("[morph]\n" + _pet.RunMorphProbe());
+                return;
+            }
+
+            // 接近感应自检：验证"接近变圆点 / 离开够远才退回细线"的迟滞
+            if (Array.IndexOf(args, "--proximity-selftest") >= 0)
+            {
+                Console.Out.Write("[proximity]\n" + _pet.RunProximityProbe());
+                return;
+            }
+
+            // 动画探针：量化展开过程（帧数 / 耗时 / 窗口改尺寸次数）
+            if (Array.IndexOf(args, "--anim-selftest") >= 0)
+            {
+                Console.Out.Write("[anim] " + _pet.RunAnimProbe(3));
+                return;
+            }
+
             // 桥接自检：走一遍真实的 PetBridge 调用后退出，用于验证端到端连通。
             if (Array.IndexOf(args, "--bridge-selftest") >= 0)
             {
@@ -98,6 +177,31 @@ namespace HajimiPet
             if (dumpDir != null)
             {
                 System.IO.Directory.CreateDirectory(dumpDir);
+                // 先导真实数据（不加覆盖），用于核对角标计数是否正确
+                _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "real.png"), true, -1);
+                // 初始堆叠态（用户要的 iPhone 通知那种）
+                _pet.DumpFrameStacked(System.IO.Path.Combine(dumpDir, "stacked.png"), -1);
+                _pet.DumpFrameStacked(System.IO.Path.Combine(dumpDir, "stacked3.png"), 3);
+                // 悬停态：脚底细线变成数字圆点
+                _pet.DumpFrameHover(System.IO.Path.Combine(dumpDir, "hover.png"), 3);
+                // 变形中间态：验证细线→圆点的形状过渡是否自然
+                float[] morphs = { 0f, 0.25f, 0.5f, 0.75f, 1f };
+                for (int mi = 0; mi < morphs.Length; mi++)
+                {
+                    _pet.DumpFrameMorph(
+                        System.IO.Path.Combine(dumpDir, "morph" + mi + ".png"),
+                        3, morphs[mi]);
+                }
+                // 显现中间态：验证列表弹出的淡入过程
+                float[] reveals = { 0.25f, 0.5f, 0.75f, 1f };
+                for (int ri = 0; ri < reveals.Length; ri++)
+                {
+                    _pet.DumpFrameReveal(
+                        System.IO.Path.Combine(dumpDir, "reveal" + ri + ".png"),
+                        3, reveals[ri], false);
+                }
+                // 细线态：有任务但鼠标不在身上
+                _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "line.png"), false, 3);
                 _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "idle.png"), false, 0);
                 _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy3.png"), false, 3);
                 _pet.DumpFrame(System.IO.Path.Combine(dumpDir, "busy3-list.png"), true, 3);
@@ -296,12 +400,14 @@ namespace HajimiPet
             {
                 // 桥接返回 ok 表示真的调到了 agent.cancel()，或该会话本就没在跑
                 bool idle = r.Body != null && r.Body.IndexOf("\"alreadyIdle\":true", StringComparison.Ordinal) >= 0;
-                _pet.Say(idle ? "该任务已结束" : "已停止该任务");
+                _pet.Say(idle ? "该任务已经结束了" : "已停止该任务");
                 _pet.RefreshSessions();
             }
             else if (r.Status == 409)
             {
-                _pet.Say("停止失败：会话不在运行");
+                // 409 = DSH 明确说这个会话不在跑。这不是失败，
+                // 说明缓存里那个 start 标记是残留 —— 刷新后它就会消失。
+                _pet.Say("该任务已经结束了");
                 _pet.RefreshSessions();
             }
             else

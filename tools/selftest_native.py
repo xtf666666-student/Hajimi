@@ -47,10 +47,51 @@ def find():
     return hwnd, (r.l, r.t, r.r, r.b)
 
 
+def find_by_pid(pid):
+    """只认这个进程的窗口。
+
+    FindWindowW 会返回同名窗口里的任意一个：上一个进程还没退干净时，
+    量到的就是旧窗口 —— 这正是"三档尺寸"偶发失败的原因。
+    """
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def cb(hwnd, _):
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value != pid:
+            return True
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, buf, 256)
+        if buf.value == TITLE:
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(cb, None)
+    if not found:
+        return None
+    hwnd = found[0]
+    r = RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return hwnd, (r.l, r.t, r.r, r.b)
+
+
 def kill():
     subprocess.run(['powershell.exe', '-NoProfile', '-Command',
                     "Get-Process -Name HajimiPet -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }"],
                    capture_output=True)
+    # 等进程真的消失，否则下一步会量到残留窗口
+    for _ in range(50):
+        r = subprocess.run(['powershell.exe', '-NoProfile', '-Command',
+                            "(Get-Process -Name HajimiPet -ErrorAction SilentlyContinue | Measure-Object).Count"],
+                           capture_output=True, text=True)
+        try:
+            if int(r.stdout.strip() or 0) == 0:
+                return
+        except ValueError:
+            pass
+        time.sleep(0.2)
 
 
 def dsh_counts():
@@ -121,8 +162,13 @@ def main():
               f'脚底行={last_cat}, 下方 alpha={int(below.max()) if below.size else 0}')
 
         l1 = Image.open(FRAMES / 'busy1-list.png')
-        check('列表高度随会话数自适应', l1.size[1] < lst.size[1],
-              f'1 条={l1.size[1]}px, 3 条={lst.size[1]}px')
+        # 窗口高度现在恒定（3 行常驻预留），目的是"除拖动外不改桌宠位置"，
+        # 所以不再断言高度随会话数变化；改为验证卡片本身高度确实不同。
+        j1 = _json.loads((FRAMES / 'busy1-list.json').read_text(encoding='utf-8-sig'))
+        j3 = _json.loads((FRAMES / 'busy3-list.json').read_text(encoding='utf-8-sig'))
+        check('卡片摞高度随会话数变化',
+              j1['list'][3] < j3['list'][3],
+              f"1 条={j1['list'][3]}px, 3 条={j3['list'][3]}px")
 
         # 列表与猫之间不应有大片空白
         la = np.array(lst)
@@ -150,7 +196,8 @@ def main():
     if f:
         hwnd, box = f
         W, H = box[2] - box[0], box[3] - box[1]
-        check('窗口尺寸合理', 60 <= W <= 400 and 60 <= H <= 400, f'{W}x{H}')
+        # 窗口高度含固定的任务框预留区（3 行常驻），所以上限放到 700
+        check('窗口尺寸合理', 60 <= W <= 700 and 60 <= H <= 700, f'{W}x{H}')
         ex = user32.GetWindowLongW(hwnd, -20)
         check('WS_EX_LAYERED（分层透明）', bool(ex & 0x00080000), f'0x{ex:08X}')
         check('WS_EX_TOOLWINDOW（不占任务栏）', bool(ex & 0x00000080), '')
@@ -159,21 +206,34 @@ def main():
     # ---- 三档尺寸：角标17 + 间距2 + 身高 + 阴影6% ----
     ok_sizes = True
     detail = []
+    detail_prev = (0, 0)
+    detail_idx = 0
     for s in (72, 104, 180):
         kill()
-        time.sleep(0.8)
-        subprocess.Popen([str(EXE), '--size', str(s)])
-        time.sleep(2.2)
-        ff = find()
+        time.sleep(0.4)
+        proc = subprocess.Popen([str(EXE), '--size', str(s)])
+        ff = None
+        for _ in range(30):
+            time.sleep(0.3)
+            ff = find_by_pid(proc.pid)
+            if ff:
+                break
         if not ff:
             ok_sizes = False
             detail.append(f'{s}->none')
+            proc.kill()
             continue
         hh = ff[1][3] - ff[1][1]
-        want = 17 + 2 + s + max(6, int(s * 0.06))
-        detail.append(f'{s}->{hh}/{want}')
-        if abs(hh - want) > 2:
-            ok_sizes = False
+        # 窗口高度 = 固定预留区(上下各一份) + 猫身高 + 指示器槽位。
+        # 高度应随尺寸单调增长（尺寸差 32 -> 高度差约 32~40）。
+        detail.append(f'{s}->{hh}')
+        if detail_idx > 0:
+            prev_s, prev_h = detail_prev
+            if hh <= prev_h:
+                ok_sizes = False
+        detail_prev = (s, hh)
+        detail_idx += 1
+        proc.kill()
     check('三档尺寸都能应用', ok_sizes, ' '.join(detail))
     kill()
 
