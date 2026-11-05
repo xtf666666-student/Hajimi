@@ -2205,10 +2205,12 @@ namespace HajimiPet
             _actionBtnD = btnD;   // 供指示器对齐用
 
             // ---- 左上角 × ----
-            // 对齐卡片**正左上角**（压在圆角上），不带实心圆底。
-            // 默认隐藏，鼠标悬停到本卡片时才淡入 —— 见 StepCloseFade。
+            // 必须完整落在**卡片矩形内**才点得到：窗口的鼠标命中基于
+            // ClientRectangle，超出窗口（或超出卡片可视区）的点会被系统丢弃。
+            // 之前放在 card.X-2, card.Y-6（卡片外面），所以点了没反应。
+            // 现在贴卡片左上角内侧，视觉上仍压着圆角。
             const int closeD = 15;
-            _btnClose[index] = new Rectangle(card.X - 2, card.Y - 6, closeD, closeD);
+            _btnClose[index] = new Rectangle(card.X + 2, card.Y + 2, closeD, closeD);
             float closeFade = (index < _closeFade.Length) ? _closeFade[index] : 0f;
             DrawCloseBare(g, _btnClose[index], closeFade,
                 _hoverCardRow == index && !_hoverAnyBtn);
@@ -2240,13 +2242,16 @@ namespace HajimiPet
             // × 现在压在卡片正左上角外侧（card.X-2 .. card.X+13），
             // 不再侵入内容区，所以左边距可以贴边。
             // 只有已完成的卡需要多留 18px 给绿勾（勾在 card.X+6）。
-            int textLeft = card.X + (item.Active ? 12 : 24);
+            // × 占 card.X+2 .. card.X+17，文字必须让开它（不悬停时 × 是透明的，
+            // 但空间照留，避免悬停时文字跳动）。
+            // 已完成还要再让开 14px 的绿勾。
+            int textLeft = card.X + (item.Active ? 20 : 32);
             int textRight = _btnReply[index].X - 8;
 
-            // 绿色圆底 + 白色对勾（仅已完成），靠左贴边
+            // 绿色圆底 + 白色对勾（仅已完成），放在 × 右侧
             if (!item.Active)
             {
-                var mark = new Rectangle(card.X + 6,
+                var mark = new Rectangle(card.X + 19,
                     (int)Math.Round(contentTop + titleH / 2f) - 7, 14, 14);
                 using (SolidBrush bg2 = new SolidBrush(Color.FromArgb(alpha, 76, 176, 116)))
                 {
@@ -2591,7 +2596,10 @@ namespace HajimiPet
                         // × 主动移除
                         SessionScanner.Dismiss(item.Id, item.Turn);
                         Poll();
-                        if (_activeCount == 0) CloseList();
+                        // 判"列表里还有没有卡片"，不能用 _activeCount：
+                        // 那是运行中的数量，删掉一个已完成的卡片后它可能已经是 0，
+                        // 会把整个列表一起关掉（看起来像"点了没反应"）。
+                        if (_active.Count == 0) CloseList();
                         Say("已移除");
                         return;
                     }

@@ -54,6 +54,17 @@ namespace HajimiPet
 
             _pet = new PetForm();
             _pet.ApplySize(size);
+
+            // 启动时清掉"见过它在跑"的记录。
+            //
+            // 用户要求：桌宠或 DSH 一重启，初始状态就不能显示任何任务卡片。
+            // _seenRunning 原本持久化保留（为了让"完成后不自动消失"跨重启生效），
+            // 但那会带来一个副作用：重启后上一轮跑完的会话仍被当成
+            // "我见过它跑过"，于是又冒出卡片。
+            // 既然要求"重启后什么都不显示"，就在启动时清空它 ——
+            // 从这一刻开始重新观察，之后新跑完的才出卡片。
+            SessionScanner.ForgetWatched();
+
             _pet.DemoRun = demoRun;
             _pet.DebugActiveOverride = activeOverride;
             _pet.OpenDshRequested += OpenDsh;

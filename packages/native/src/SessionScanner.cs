@@ -199,6 +199,23 @@ namespace HajimiPet
             }
         }
 
+        /// <summary>
+        /// 清空"桌宠见过它在跑"的记录。
+        ///
+        /// 启动时调用：用户要求桌宠 / DSH 一重启，初始状态不显示任何任务卡片。
+        /// 清掉之后从当前时刻重新观察，只有重启后真跑完的会话才出卡片。
+        ///
+        /// 注意同时清掉 _dismissed：否则"重启前被 × 掉"的旧状态会残留，
+        /// 语义上和"全新开始"不一致。
+        /// </summary>
+        public static void ForgetWatched()
+        {
+            Load();
+            _seenRunning.Clear();
+            _dismissed.Clear();
+            Save();
+        }
+
         public static void Save()
         {
             try

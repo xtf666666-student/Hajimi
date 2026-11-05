@@ -1,4 +1,4 @@
-"""Verify only sessions the pet actually watched running produce cards."""
+"""Verify: a fresh pet start shows no completed cards, only running ones."""
 import json
 import os
 import pathlib
@@ -10,12 +10,12 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXE = ROOT / 'packages' / 'native' / 'bin' / 'Release' / 'net48' / 'HajimiPet.exe'
 
-tmp = pathlib.Path(tempfile.mkdtemp(prefix='lc5-'))
+tmp = pathlib.Path(tempfile.mkdtemp(prefix='lc6-'))
 cache = tmp / 'storages' / 'session_projcache' / 'sessions'
 cache.mkdir(parents=True)
 
 
-def mk(idx, title, kind, seq, age, resp='', touch_now=False):
+def mk(idx, title, kind, seq, age, resp=''):
     payload = {
         'version': 7,
         'record': {
@@ -39,44 +39,29 @@ def mk(idx, title, kind, seq, age, resp='', touch_now=False):
     }
     p = cache / ('session-test-0000-0000-0000-0000000000%02d.json' % idx)
     p.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
-    ts = time.time() - (0 if touch_now else age)
+    ts = time.time() - age
     os.utime(p, (ts, ts))
-    return p
 
 
 env = dict(os.environ)
 env['DSH_HOME'] = str(tmp)
 
-# ---- 第一轮：只有运行中的会话 ----
+# 构造：1 个运行中 + 5 个近期已完成（模拟"上次跑完后重启"）
 mk(1, 'A-正在跑', 'start', 100, 5, '运行中')
+for i in range(2, 7):
+    mk(i, '已完成%d' % i, 'end', None, 60 * i, '这是一段结果文本')
+
 subprocess.run([str(EXE), '--size', '140', '--dump', str(tmp / 'f1')],
                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
 
-g1 = json.loads((tmp / 'f1' / 'real.json').read_text(encoding='utf-8-sig'))
-print('第一轮（只有运行中）：卡片数 =', g1['rows'][0], '  期望 1')
-
-# 检查 seen 文件里是否记下了 ran=true
-seen = tmp / 'hajimi-pet-seen.json'
-has_ran = 'session-test-0000-0000-0000-000000000001' in seen.read_text(encoding='utf-8')
-print('桌宠记录「见过它跑」=', has_ran)
-
-# ---- 第二轮：把会话改成已完成，模拟"它跑完了" ----
-mk(1, 'A-已跑完', 'end', None, 120, '刚完成的结果')
-# 再加 4 个"从没被桌宠见过在跑"的历史已完成会话（还原用户截图里的情况）
-for i in range(2, 6):
-    mk(i, '历史%d' % i, 'end', None, 3600 * 24, '历史结果')
-
-subprocess.run([str(EXE), '--size', '140', '--dump', str(tmp / 'f2')],
-               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
-
-g2 = json.loads((tmp / 'f2' / 'real.json').read_text(encoding='utf-8-sig'))
-rows2 = g2['rows'][0]
-print('第二轮（1 个跑完 + 4 个历史）：卡片数 =', rows2, '  期望 1')
+g = json.loads((tmp / 'f1' / 'real.json').read_text(encoding='utf-8-sig'))
+rows = g['rows'][0]
+print(f'全新启动（1 运行中 + 5 已完成）：卡片数 = {rows}   期望 1')
 print()
 
-ok = g1['rows'][0] == 1 and rows2 == 1
+ok = rows == 1
 print('PASS' if ok else 'FAIL',
-      '- 只有桌宠亲眼见过的会话才出卡片')
+      '- 启动时只显示正在跑的，已完成的一律不显示' if ok else '')
 
 shutil.rmtree(tmp, ignore_errors=True)
 raise SystemExit(0 if ok else 1)
