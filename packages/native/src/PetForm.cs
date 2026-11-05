@@ -2145,8 +2145,10 @@ namespace HajimiPet
             _actionBtnD = btnD;   // 供指示器对齐用
 
             // ---- 左上角 × ----
-            const int closeD = 16;
-            _btnClose[index] = new Rectangle(card.X + 8, card.Y - 5, closeD, closeD);
+            // 完全挪到卡片**外侧上方**（不再半浮进卡片内容区），
+            // 这样无论标题多长都不会被它压住。
+            const int closeD = 15;
+            _btnClose[index] = new Rectangle(card.X + 6, card.Y - closeD - 2, closeD, closeD);
             DrawIconButton(g, _btnClose[index], IconKind.Close, true,
                 IsHovered(index, IconKind.Close));
 
@@ -2174,8 +2176,10 @@ namespace HajimiPet
             float contentTop = card.Y + (card.Height - contentH) / 2f;
             if (contentTop < card.Y + 3f) contentTop = card.Y + 3f;
 
-            // 已完成时左侧有 14px 对勾圆，正文要让开；运行中直接贴边距。
-            int textLeft = card.X + (item.Active ? 12 : 26);
+            // 左侧要让开左上角的 × （占 card.X+8 .. card.X+24）。
+            // 之前运行中只留 12px，× 直接压在标题上（用户截图的问题）。
+            // 已完成时还要再让开 14px 的绿勾。
+            int textLeft = card.X + (item.Active ? 28 : 30);
             int textRight = _btnReply[index].X - 8;
 
             // 绿色圆底 + 白色对勾（仅已完成）
@@ -2199,7 +2203,13 @@ namespace HajimiPet
             }
 
             const string Sep = " · ";
-            float sepW = g.MeasureString(Sep, titleFont).Width;
+            // 与绘制时同一个字号（9pt Bold），否则宽度算不准，
+            // 内容起始位置会和分隔符错开。
+            float sepW;
+            using (Font sepFont = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold))
+            {
+                sepW = g.MeasureString(Sep, sepFont).Width;
+            }
 
             // **标题完整展示**：不截断。若标题本身就超过整行宽度
             // （极少见），宁可让内容从第二行开始也不切标题。
@@ -2210,14 +2220,14 @@ namespace HajimiPet
                 g.DrawString(item.Title, titleFont, ink, textLeft, contentTop);
             }
 
-            // 分隔符：紧跟标题绘制，**不做是否放得下的判断**。
-            // 之前用 sepFits 判断，标题一长就直接不画分隔符，
-            // 内容又另起一行，看起来像"标题和内容没关系"。
+            // 分隔符：紧跟标题绘制，" " 前后各留半个字宽。
+            // 颜色按用户指定 #6A6B6D（(106,107,109)），字号与标题同档并加粗，
+            // 明显度介于标题与正文之间。
             bool sepFits = !string.IsNullOrEmpty(body);
             if (sepFits)
             {
-                using (SolidBrush sepBr = new SolidBrush(Color.FromArgb(alpha, 146, 128, 108)))
-                using (Font sepFont = new Font("Microsoft YaHei UI", 8.5f))
+                using (SolidBrush sepBr = new SolidBrush(Color.FromArgb(alpha, 106, 107, 109)))
+                using (Font sepFont = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold))
                 {
                     g.DrawString(Sep, sepFont, sepBr,
                         textLeft + titleW, contentTop + (titleH - bodyH) / 2f);
