@@ -2117,39 +2117,41 @@ namespace HajimiPet
                 g.DrawPath(border, path);
             }
 
-            // ---- 布局：两行（标题 · 内容 / 状态） ----
+            // ---- 布局：标题完整 + 内容最多两行 ----
             //
-            // 用户要求：标题 + " · " + 内容，标题加粗，内容从第一个字符开始，
-            // 单行放不下就用 ... 截断；且**标题优先**，内容只能吃剩余空间，
-            // 否则内容一变长标题就被挤没了。
-            string status = string.IsNullOrEmpty(item.Status) ? "已结束" : item.Status;
+            // 用户要求：
+            //   - 标题**完整展示**，绝不允许省略号
+            //   - 标题后跟一个 " · " 分隔符，粗细/颜色介于标题与正文之间
+            //   - 内容可以从第一行续到第二行
+            //   - 去掉"正在响应"状态行
             string body = item.Body ?? string.Empty;
 
-            float titleH = g.MeasureString(item.Title, font).Height;
-            float statusH = g.MeasureString(status, timeFont).Height;
-            const float lineGap = 1f;
-            float contentH = titleH + lineGap + statusH;
+            var titleFont = font;     // 9.5 Bold
+            var bodyFont = timeFont;  // 8 Regular
 
-            // 圆形按钮直径 = 内容高度（用户要求"高度和左侧内容一样高"）。
-            // GDI+ 的 MeasureString 会带上行间距，实测比视觉字高大不少，
-            // 所以再按卡片高度的 55% 收一次，避免按钮把整张卡撑满。
+            float titleH = g.MeasureString(item.Title, titleFont).Height;
+            float bodyH = g.MeasureString("测", bodyFont).Height;
+            const float lineGap = 2f;
+
+            // 两行文字的总高：第一行（标题行） + 第二行（内容续行）
+            float contentH = titleH + lineGap + bodyH;
+
+            // 圆形按钮直径 = 内容高度，再按卡片高度收一下
             int btnD = (int)Math.Round(contentH);
             if (btnD < BtnMinD) btnD = BtnMinD;
             if (btnD > BtnMaxD) btnD = BtnMaxD;
-            int capD = (int)(card.Height * 0.55f);
+            int capD = (int)(card.Height * 0.62f);
             if (btnD > capD) btnD = capD;
             _actionBtnD = btnD;   // 供指示器对齐用
 
             // ---- 左上角 × ----
-            // 半浮在卡片左上边缘外，用固定的小尺寸（16px）：
-            // 它是"关闭"这种次要操作，不该和回复/停止一样占满卡片高度。
             const int closeD = 16;
             _btnClose[index] = new Rectangle(card.X + 8, card.Y - 5, closeD, closeD);
             DrawIconButton(g, _btnClose[index], IconKind.Close, true,
                 IsHovered(index, IconKind.Close));
 
             // ---- 右侧动作按钮 ----
-            // 运行中：回复 + 停止；已完成：只保留回复（用户要求隐藏停止）。
+            // 运行中：回复 + 停止；已完成：只保留回复。
             int btnY = card.Y + (card.Height - btnD) / 2;
             int stopX = card.Right - 12 - btnD;
             int replyX = stopX - 8 - btnD;
@@ -2162,28 +2164,25 @@ namespace HajimiPet
             }
             else
             {
-                // 没有停止按钮时，回复按钮右移占住它的位置
                 _btnStop[index] = Rectangle.Empty;
                 _btnReply[index] = new Rectangle(stopX, btnY, btnD, btnD);
             }
             DrawIconButton(g, _btnReply[index], IconKind.Reply, true,
                 IsHovered(index, IconKind.Reply));
 
-            // ---- 第一行：标记 + 标题 · 内容 ----
+            // ---- 文字区域 ----
             float contentTop = card.Y + (card.Height - contentH) / 2f;
-            if (contentTop < card.Y + 4f) contentTop = card.Y + 4f;
+            if (contentTop < card.Y + 3f) contentTop = card.Y + 3f;
 
-            // 已完成时左侧有 14px 的对勾圆，正文要让开；运行中没有标记，
-            // 正文直接贴到卡片左边距（用户要求运行中不要绿点）。
-            int textLeft = card.X + (item.Active ? 14 : 22);
+            // 已完成时左侧有 14px 对勾圆，正文要让开；运行中直接贴边距。
+            int textLeft = card.X + (item.Active ? 12 : 26);
             int textRight = _btnReply[index].X - 8;
 
-            int markX = card.X + 14;
-            int markY = (int)Math.Round(contentTop + titleH / 2f) - 5;
+            // 绿色圆底 + 白色对勾（仅已完成）
             if (!item.Active)
             {
-                // 已完成：实心绿圆 + 白色对勾
-                var mark = new Rectangle(markX - 1, markY - 1, 14, 14);
+                var mark = new Rectangle(card.X + 12,
+                    (int)Math.Round(contentTop + titleH / 2f) - 7, 14, 14);
                 using (SolidBrush bg2 = new SolidBrush(Color.FromArgb(alpha, 76, 176, 116)))
                 {
                     g.FillEllipse(bg2, mark);
@@ -2199,68 +2198,83 @@ namespace HajimiPet
                 }
             }
 
-            // 标题优先：先量标题，内容只吃剩下的宽度。
-            // 这样内容再长，标题也不会被挤出去（用户要的"最佳实践"）。
             const string Sep = " · ";
-            float sepW = g.MeasureString(Sep, font).Width;
-            float avail = textRight - textLeft;
+            float sepW = g.MeasureString(Sep, titleFont).Width;
 
-            string titleShown = item.Title;
-            float titleW = g.MeasureString(titleShown, font).Width;
-            // 标题最多占 35%，把更多宽度让给内容。
-            // 内容才是用户想看的信息，标题通常短且可识别前几个字。
-            float titleCap = avail * 0.35f;
-            if (titleW > titleCap)
-            {
-                titleShown = Ellipsize(g, item.Title, font, (int)titleCap);
-                titleW = g.MeasureString(titleShown, font).Width;
-            }
-
-            float bodyAvail = avail - titleW - sepW;
-            string bodyShown = string.Empty;
-            if (bodyAvail > 24 && !string.IsNullOrEmpty(body))
-            {
-                bodyShown = Ellipsize(g, body, timeFont, (int)bodyAvail);
-            }
+            // **标题完整展示**：不截断。若标题本身就超过整行宽度
+            // （极少见），宁可让内容从第二行开始也不切标题。
+            float titleW = g.MeasureString(item.Title, titleFont).Width;
 
             using (SolidBrush ink = new SolidBrush(Color.FromArgb(alpha, 52, 40, 30)))
             {
-                g.DrawString(titleShown, font, ink, textLeft, contentTop);
+                g.DrawString(item.Title, titleFont, ink, textLeft, contentTop);
             }
-            if (!string.IsNullOrEmpty(bodyShown))
+
+            // 分隔符：紧跟标题绘制，**不做是否放得下的判断**。
+            // 之前用 sepFits 判断，标题一长就直接不画分隔符，
+            // 内容又另起一行，看起来像"标题和内容没关系"。
+            bool sepFits = !string.IsNullOrEmpty(body);
+            if (sepFits)
             {
-                using (SolidBrush sepBr = new SolidBrush(Color.FromArgb(alpha, 168, 152, 134)))
-                using (SolidBrush bodyBr = new SolidBrush(Color.FromArgb(alpha, 118, 100, 82)))
+                using (SolidBrush sepBr = new SolidBrush(Color.FromArgb(alpha, 146, 128, 108)))
+                using (Font sepFont = new Font("Microsoft YaHei UI", 8.5f))
                 {
-                    float sx = textLeft + titleW;
-                    g.DrawString(Sep, font, sepBr,
-                        sx, contentTop);
-                    g.DrawString(bodyShown, timeFont, bodyBr,
-                        sx + sepW, contentTop + (titleH - statusH * 1.0f) / 2f + 2f);
+                    g.DrawString(Sep, sepFont, sepBr,
+                        textLeft + titleW, contentTop + (titleH - bodyH) / 2f);
                 }
             }
 
-            // ---- 第二行：状态 + 相对时间 ----
-            using (SolidBrush st = new SolidBrush(Color.FromArgb(alpha, 150, 134, 116)))
-            {
-                string stText = Ellipsize(g, status, timeFont, (int)avail);
-                g.DrawString(stText, timeFont, st, textLeft, contentTop + titleH + lineGap);
+            // ---- 内容：从标题右侧开始，排不下就续到第二行 ----
+            float firstLineX = textLeft + titleW + (sepFits ? sepW : 0f);
+            float firstLineW = textRight - firstLineX;
+            float secondLineW = textRight - textLeft;
 
-                float stW = g.MeasureString(stText, timeFont).Width;
-                int ax = textLeft + (int)stW + 8;
-                SizeF asz = g.MeasureString(item.Ago, metaFont);
-                if (ax + (int)asz.Width < textRight)
+            if (!string.IsNullOrEmpty(body))
+            {
+                using (SolidBrush bodyBr = new SolidBrush(Color.FromArgb(alpha, 118, 100, 82)))
                 {
-                    using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(alpha, 172, 152, 132)))
+                    if (firstLineW > 40)
                     {
-                        g.DrawString(item.Ago, metaFont, agoBrush,
-                            ax, contentTop + titleH + lineGap
-                               + (statusH - asz.Height) / 2f);
+                        // 第一段：尽量填满标题右侧
+                        string head = TakeFitting(g, body, bodyFont, (int)firstLineW);
+                        g.DrawString(head, bodyFont, bodyBr,
+                            firstLineX, contentTop + (titleH - bodyH) / 2f + 1f);
+
+                        string rest = body.Substring(head.Length).TrimStart();
+                        if (!string.IsNullOrEmpty(rest) && secondLineW > 40)
+                        {
+                            string second = Ellipsize(g, rest, bodyFont, (int)secondLineW);
+                            g.DrawString(second, bodyFont, bodyBr,
+                                textLeft, contentTop + titleH + lineGap);
+                        }
+                    }
+                    else
+                    {
+                        // 标题几乎占满整行：内容整体从第二行开始
+                        string second = Ellipsize(g, body, bodyFont, (int)secondLineW);
+                        g.DrawString(second, bodyFont, bodyBr,
+                            textLeft, contentTop + titleH + lineGap);
                     }
                 }
             }
         }
 
+        /// <summary>
+        /// 从字符串开头取出**能放进 maxWidth 的最长前缀**，不加省略号。
+        /// 用于"第一行填满、剩余部分换行继续"的排版。
+        /// </summary>
+        private static string TakeFitting(Graphics g, string s, Font font, int maxWidth)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            if (g.MeasureString(s, font).Width <= maxWidth) return s;
+
+            int n = s.Length;
+            while (n > 0 && g.MeasureString(s.Substring(0, n), font).Width > maxWidth)
+            {
+                n--;
+            }
+            return s.Substring(0, n);
+        }
         /// <summary>
         /// 当前绘制的按钮是否处于悬停状态。
         /// 由 UpdateHoverButton 每帧（鼠标移动时）算好，绘制时直接读。

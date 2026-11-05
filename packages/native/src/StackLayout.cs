@@ -16,12 +16,13 @@ namespace HajimiPet
     /// </summary>
     internal sealed class StackLayout
     {
-        // 两行卡片：标题 + 内容（仿用户给的通知样式）
-        // 宽度从 248 加到 360：卡里要放"标题 · 内容"两段文字，
-        // 248 时内容被挤得不到 120px，几乎全靠省略号。
-        // 再放到 360 后内容区约 200px，能显示十来个汉字。
-        public const int CardW = 360;
-        public const int CardH = 58;
+        // 卡片：第一行「标题 · 内容」（标题完整、内容截断），
+        // 第二行是内容续行（最多两行）。
+        //
+        // 宽度 360 -> 300：用户觉得太长，缩回来。
+        // 高度 58 -> 52：去掉了状态行，只留两行文字，卡不用那么高。
+        public const int CardW = 300;
+        public const int CardH = 52;
         /// <summary>收起时每张只露出这么多，形成"一摞"。
         /// 16px 刚好露出下沿圆角，iPhone 通知堆叠就是这个观感。</summary>
         public const int PeekOffset = 16;
