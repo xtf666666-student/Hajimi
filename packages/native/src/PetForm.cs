@@ -870,7 +870,7 @@ namespace HajimiPet
             if (!_catAnchorValid)
             {
                 int catH = PetSize;
-                int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
+                int indicatorArea = _active.Count > 0 ? IndicatorSlotH : 0;
                 int listArea = ListAreaFor(_active.Count);
                 _catAnchor = new Point(
                     Left + CatLeftInWindow(winW),
@@ -884,7 +884,7 @@ namespace HajimiPet
         private void SetCatAnchorFromWindow()
         {
             int catH = PetSize;
-            int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
+            int indicatorArea = _active.Count > 0 ? IndicatorSlotH : 0;
             int listArea = ListAreaFor(_active.Count);
             _catAnchor = new Point(
                 Left + CatLeftInWindow(Width),
@@ -951,7 +951,7 @@ namespace HajimiPet
             // 上下都按**最大**高度预留，这样列表从堆叠展开成完整列表时
             // 窗口尺寸不用再变，也不会裁掉卡片。
             int listArea = ListAreaFor(_active.Count);
-            int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
+            int indicatorArea = _active.Count > 0 ? IndicatorSlotH : 0;
 
             // 下方预留要能容纳"翻转到猫脚下方"的整摞，见 BelowAreaFor
             int belowArea = BelowAreaFor(listArea, catH, indicatorArea);
@@ -1479,7 +1479,7 @@ namespace HajimiPet
                 // 所以 catY = listArea 时，猫 + 指示器正好填满下方，居中对称。
                 int listArea = ListAreaFor(_active.Count);
                 int catY = CatYInWindow(listArea, catH,
-                                        _activeCount > 0 ? IndicatorSlotH : 0);
+                                        _active.Count > 0 ? IndicatorSlotH : 0);
                 // CatYInWindow 与 ApplyLayout 用的是同一个公式，
                 // 保证"布局算出的猫位置"和"实际画出的猫位置"永远一致。
                 // 之前这里直接写 catY = listArea，列表关闭时 listArea=0，
@@ -1601,7 +1601,10 @@ namespace HajimiPet
         /// </summary>
         private void DrawIndicator(Bitmap canvas, int w, int catX, int catW, int footBottom)
         {
-            if (_activeCount <= 0)
+            // 判"有没有卡片要展示"，不是"有没有在跑的"。
+            // 已完成的卡片会一直保留（用户要求不自动消失），
+            // 所以只要列表里还有卡片，脚底指示器就得在，否则用户点不进列表。
+            if (_active.Count <= 0)
             {
                 _badgeRect = Rectangle.Empty;
                 _indicatorKind = IndicatorKind.None;
@@ -1681,7 +1684,9 @@ namespace HajimiPet
                 float textT = Clamp01((baseT - 0.55f) / 0.45f);
                 if (textT > 0.02f)
                 {
-                    string text = _activeCount.ToString();
+                    // 显示"卡片总数"（运行中 + 已完成未关闭），
+                    // 因为点它展开的就是这些卡片，数字要对得上。
+                    string text = _active.Count.ToString();
                     int textAlpha = (int)Math.Round(255 * textT);
                     if (textAlpha > 255) textAlpha = 255;
 
@@ -2548,7 +2553,7 @@ namespace HajimiPet
             int catH = PetSize;
             int catX0 = CatLeftInWindow(ClientSize.Width);
             int catY0 = CatYInWindow(ListAreaFor(_active.Count), catH,
-                                     _activeCount > 0 ? IndicatorSlotH : 0);
+                                     _active.Count > 0 ? IndicatorSlotH : 0);
 
             float nx = (e.X - (catX0 + catW / 2f)) / Math.Max(1f, catW / 2f);
             float ny = (e.Y - (catY0 + catH / 2f)) / Math.Max(1f, catH / 2f);
@@ -2703,7 +2708,9 @@ namespace HajimiPet
             if (!_listOpen)
             {
                 Poll();
-                if (_activeCount == 0)
+                // 判"列表里还有没有卡片"，不能用 _activeCount：
+                // 那是运行中的数量，已完成但未关闭的卡片仍然要能展开看。
+                if (_active.Count == 0)
                 {
                     Say("现在没有任务");
                     return;
@@ -2990,7 +2997,7 @@ namespace HajimiPet
 
                 int catX = Left + CatLeftInWindow(Width);
                 int catWNow = (int)(PetSize * 0.817f);
-                int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
+                int indicatorArea = _active.Count > 0 ? IndicatorSlotH : 0;
                 int catYInWin = ListAreaFor(_active.Count);
                 int catY = Top + catYInWin;
 
@@ -3698,7 +3705,7 @@ namespace HajimiPet
 
             int catW = (int)(PetSize * 0.817f);
             int catH = PetSize;
-            int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
+            int indicatorArea = _active.Count > 0 ? IndicatorSlotH : 0;
             int catYInWin = ListAreaFor(_active.Count);
 
             // 猫在窗口内的位置随 _hugT 变化（贴边时猫靠向窗口外侧）。
@@ -3748,7 +3755,7 @@ namespace HajimiPet
 
             int catW = (int)(PetSize * 0.817f);
             int catH = PetSize;
-            int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
+            int indicatorArea = _active.Count > 0 ? IndicatorSlotH : 0;
             int catYInWin = ListAreaFor(_active.Count);
 
             int catX = Left + CatLeftInWindow(Width);
@@ -3840,7 +3847,7 @@ namespace HajimiPet
             // 原来只留了 ListBottomGap(4px)，卡片会直接盖住那颗箭头，
             // 用户点不到收起按钮（截图里的问题）。
             // 这里加上指示器槽位 + 一点呼吸，刚好让箭头完整露出。
-            int indicatorReserve = (_activeCount > 0 ? IndicatorSlotH : 0) + ListBottomGap;
+            int indicatorReserve = (_active.Count > 0 ? IndicatorSlotH : 0) + ListBottomGap;
             float offBelow = catH + indicatorReserve + fullH;
             int topIfBelow = catTop + (int)offBelow - fullH;
             bool fitsBelow = topIfBelow + fullH <= work.Bottom - ListEdgeMargin;
@@ -4017,7 +4024,13 @@ namespace HajimiPet
             _active.Clear();
             _active.AddRange(items);
             int prevCount = _activeCount;
-            _activeCount = items.Count;
+
+            // _activeCount 是**角标数字**，语义是"正在运行几个任务"，
+            // 所以只数 Active 的。列表里可能还挂着已完成的卡片
+            // （用户要求完成后不自动消失），但它们不该计入运行数。
+            int running = 0;
+            foreach (SessionItem it in items) { if (it.Active) running++; }
+            _activeCount = running;
 
             // 角标占位与否会改变窗口高度，所以"有没有东西可显示"也算变化
             bool layoutChanged = changed || (prevCount > 0) != (_activeCount > 0);

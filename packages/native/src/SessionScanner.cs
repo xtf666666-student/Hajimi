@@ -22,11 +22,29 @@ namespace HajimiPet
         public string Body;
         /// <summary>这一轮是否还在跑。</summary>
         public bool Active;
+        /// <summary>
+        /// 已完成的卡片是否还要显示。
+        ///
+        /// 用户要求"任务完成后卡片绝不自动消失"，所以只要用户没主动关掉
+        /// （没点 × / 没点进会话 / 没在 DSH 里切过去），就一直保留。
+        /// 由 Read() 根据 _dismissed 决定。
+        /// </summary>
+        public bool ShowCompleted;
         /// <summary>刚跑完、还没被用户看过。注意：这不再影响角标显示。</summary>
         public bool Unread;
         public int Turn;
         public DateTime Updated;
         public string Ago;
+
+        /// <summary>
+        /// 会话缓存文件的修改时间。
+        ///
+        /// 用途：判断"用户是否刚刚在 DSH 里打开过这个会话"。
+        /// DSH 打开一个会话时会刷新它的缓存文件，于是 mtime 变新；
+        /// 已完成的卡片如果 mtime 在最近 FileTouchWindow 内更新过，
+        /// 就认为用户已经从 DSH 侧进入过它 —— 对应需求里的条件 3。
+        /// </summary>
+        public DateTime FileMtime;
 
         public override string ToString()
         {
@@ -111,6 +129,12 @@ namespace HajimiPet
         /// <summary>sessionId -> 完成时刻（首次发现它「已完成」时记下，避免列表抖动）。</summary>
         private static Dictionary<string, DateTime> _finishedAt =
             new Dictionary<string, DateTime>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 会话缓存文件在这么多秒内被写过，就认为"用户刚从 DSH 打开了它"。
+        /// 用于条件 3 的判定。
+        /// </summary>
+        private const int FileTouchWindowSeconds = 60;
 
         /// <summary>用户主动叉掉的会话，永久不再提示（直到它再次开始运行）。</summary>
         private static HashSet<string> _dismissed = new HashSet<string>(StringComparer.Ordinal);
@@ -254,14 +278,38 @@ namespace HajimiPet
                         _finishedAt.Remove(id);
                         _dismissed.Remove(id);
                         item.Unread = false;
+                        item.ShowCompleted = false;   // 运行中走 Active 分支
                     }
                     else if (_dismissed.Contains(id))
                     {
-                        // 用户已经主动关掉，不再提示
+                        // 用户已经主动关掉（×、点卡片、或在 DSH 里切进去过）
                         item.Unread = false;
+                        item.ShowCompleted = false;
                     }
                     else
                     {
+                        // 条件 3：用户在 DSH 里主动切进了这个会话。
+                        //
+                        // DSH 打开会话时会刷新它的缓存文件，所以"已完成 + 文件刚被写过"
+                        // 就等价于"用户已经进去看过了"。这时把卡片关掉。
+                        //
+                        // 注意窗口要够短（60 秒）：太长会把正常的缓存整理误判成"打开"，
+                        // 太短则用户刚点进去、桌宠还没轮询就错过了。
+                        bool justOpened = item.FileMtime != DateTime.MinValue &&
+                                          (DateTime.Now - item.FileMtime).TotalSeconds
+                                              <= FileTouchWindowSeconds;
+                        if (justOpened)
+                        {
+                            _dismissed.Add(id);
+                            _seenTurn[id] = item.Turn;
+                            Save();
+                            item.ShowCompleted = false;
+                        }
+                        else
+                        {
+                            // 未被关闭的已完成会话：卡片**继续保留**（用户要求不自动消失）
+                            item.ShowCompleted = true;
+                        }
                         // 未读判定优先用「轮次序号」——会话内嵌、单调递增，最可靠。
                         // 旧记录里没有 turn（只有 seen 时间戳），此时退回时间比较，
                         // 但用的是 lastPromptAt（会话自带），不是文件 mtime
@@ -320,13 +368,23 @@ namespace HajimiPet
         /// 所以"跑完未看"不再计入角标，也不会出现在列表里 ——
         /// 它只在会话真正 running 时才有意义。
         /// </summary>
+        /// <summary>
+        /// 卡片列表：**运行中** 的会话 + **已完成但还没被用户关闭** 的会话。
+        ///
+        /// 用户要求：任务完成后卡片不能自动消失，必须保留到用户
+        ///   × 关掉它、或点卡片进入会话、或在 DSH 里切到那个会话。
+        /// 后两种都会调 Dismiss 把 ID 记进 _dismissed，于是这里就不再返回。
+        ///
+        /// 运行中重新开始的会话会自动从 _dismissed 移除（见 Read 里那段），
+        /// 所以同一会话再次跑起来时卡片会重新出现。
+        /// </summary>
         public static List<SessionItem> ReadActive()
         {
             List<SessionItem> all = Read();
             List<SessionItem> show = new List<SessionItem>();
             foreach (SessionItem item in all)
             {
-                if (item.Active) show.Add(item);
+                if (item.Active || item.ShowCompleted) show.Add(item);
             }
             return show;
         }
@@ -373,6 +431,17 @@ namespace HajimiPet
                 // 导致早已结束的会话被误判成"刚完成、未读"。
                 DateTime updated = ReadLastPromptAt(text);
 
+                // 文件 mtime 单独留一份：用来感知"用户刚在 DSH 打开过它"
+                DateTime fileMtime = DateTime.MinValue;
+                try
+                {
+                    fileMtime = File.GetLastWriteTime(file);
+                }
+                catch
+                {
+                    /* 读不到就算了，不影响其它字段 */
+                }
+
                 // 读不到内嵌时间戳时才退回文件时间，并把它"钝化"到分钟级，
                 // 避免几秒的抖动又被当成新消息。
                 if (updated == DateTime.MinValue)
@@ -400,6 +469,7 @@ namespace HajimiPet
                     Turn = turn,
                     Updated = updated,
                     Ago = Relative(updated),
+                    FileMtime = fileMtime,
                 };
             }
             catch
