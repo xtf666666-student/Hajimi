@@ -1,4 +1,4 @@
-"""Verify completed-card lifecycle: only recent completions appear."""
+"""Verify only sessions the pet actually watched running produce cards."""
 import json
 import os
 import pathlib
@@ -10,12 +10,12 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXE = ROOT / 'packages' / 'native' / 'bin' / 'Release' / 'net48' / 'HajimiPet.exe'
 
-tmp = pathlib.Path(tempfile.mkdtemp(prefix='lc4-'))
+tmp = pathlib.Path(tempfile.mkdtemp(prefix='lc5-'))
 cache = tmp / 'storages' / 'session_projcache' / 'sessions'
 cache.mkdir(parents=True)
 
 
-def mk(idx, title, kind, seq, age_seconds, resp='', touch_now=False):
+def mk(idx, title, kind, seq, age, resp='', touch_now=False):
     payload = {
         'version': 7,
         'record': {
@@ -30,7 +30,7 @@ def mk(idx, title, kind, seq, age_seconds, resp='', touch_now=False):
                 'turnOutline': {'seq': 1, 'val': {'turns': [
                     {'turn': 5, 'seq': 5, 'prompt': 'x', 'response': resp}]}},
                 'sessionListMetadata': {'seq': 1, 'val': {
-                    'lastPromptAt': int(time.time() * 1000) - int(age_seconds * 1000),
+                    'lastPromptAt': int(time.time() * 1000) - int(age * 1000),
                     'blank': False}},
                 'sessionStats': {'seq': 1, 'val': {
                     'turns': 5, 'lastTurn': 5, 'openStep': None, 'pendingCalls': {}}},
@@ -39,45 +39,44 @@ def mk(idx, title, kind, seq, age_seconds, resp='', touch_now=False):
     }
     p = cache / ('session-test-0000-0000-0000-0000000000%02d.json' % idx)
     p.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
-    ts = time.time() - (0 if touch_now else age_seconds)
+    ts = time.time() - (0 if touch_now else age)
     os.utime(p, (ts, ts))
     return p
 
 
-# 1) 运行中 -> 显示
-mk(1, 'A-正在跑', 'start', 100, 35, '运行中')
-# 2) 5 分钟前完成 -> 显示（刚完成，30 分钟内）
-mk(2, 'B-刚完成5分钟', 'end', None, 300, '刚完成的结果')
-# 3) 10 小时前完成 -> 隐藏（历史会话）
-mk(3, 'C-十小时前完成', 'end', None, 36000, '历史结果')
-# 4) 3 天前完成 -> 隐藏
-mk(4, 'D-三天前完成', 'end', None, 259200, '更早的结果')
-# 5) 刚完成但文件刚被写过 -> 隐藏（条件 3）
-mk(5, 'E-刚被DSH打开', 'end', None, 300, '应被关闭', touch_now=True)
-# 6) 又一个历史会话 -> 隐藏
-mk(6, 'F-一天前完成', 'end', None, 86400, '历史')
-
 env = dict(os.environ)
 env['DSH_HOME'] = str(tmp)
 
-out = tmp / 'o.txt'
-with open(out, 'w') as o:
-    subprocess.run([str(EXE), '--size', '140', '--dump', str(tmp / 'frames')],
-                   env=env, stdout=o, stderr=subprocess.STDOUT, timeout=120)
+# ---- 第一轮：只有运行中的会话 ----
+mk(1, 'A-正在跑', 'start', 100, 5, '运行中')
+subprocess.run([str(EXE), '--size', '140', '--dump', str(tmp / 'f1')],
+               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
 
-gj = tmp / 'frames' / 'real.json'
-if not gj.exists():
-    print('FAIL: 无 real.json')
-    shutil.rmtree(tmp, ignore_errors=True)
-    raise SystemExit(1)
+g1 = json.loads((tmp / 'f1' / 'real.json').read_text(encoding='utf-8-sig'))
+print('第一轮（只有运行中）：卡片数 =', g1['rows'][0], '  期望 1')
 
-g = json.loads(gj.read_text(encoding='utf-8-sig'))
-rows = g['rows'][0]
+# 检查 seen 文件里是否记下了 ran=true
+seen = tmp / 'hajimi-pet-seen.json'
+has_ran = 'session-test-0000-0000-0000-000000000001' in seen.read_text(encoding='utf-8')
+print('桌宠记录「见过它跑」=', has_ran)
 
-print(f'卡片数 = {rows}   期望 2（1 运行中 + 1 刚完成）')
+# ---- 第二轮：把会话改成已完成，模拟"它跑完了" ----
+mk(1, 'A-已跑完', 'end', None, 120, '刚完成的结果')
+# 再加 4 个"从没被桌宠见过在跑"的历史已完成会话（还原用户截图里的情况）
+for i in range(2, 6):
+    mk(i, '历史%d' % i, 'end', None, 3600 * 24, '历史结果')
+
+subprocess.run([str(EXE), '--size', '140', '--dump', str(tmp / 'f2')],
+               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+
+g2 = json.loads((tmp / 'f2' / 'real.json').read_text(encoding='utf-8-sig'))
+rows2 = g2['rows'][0]
+print('第二轮（1 个跑完 + 4 个历史）：卡片数 =', rows2, '  期望 1')
 print()
-ok = rows == 2
-print('PASS' if ok else 'FAIL')
+
+ok = g1['rows'][0] == 1 and rows2 == 1
+print('PASS' if ok else 'FAIL',
+      '- 只有桌宠亲眼见过的会话才出卡片')
 
 shutil.rmtree(tmp, ignore_errors=True)
 raise SystemExit(0 if ok else 1)

@@ -136,17 +136,20 @@ namespace HajimiPet
         /// </summary>
         private const int FileTouchWindowSeconds = 60;
 
-        /// <summary>
-        /// 已完成的会话，完成时间在这么多分钟内才显示卡片。
-        ///
-        /// 用途：桌宠重启时不要把整个会话历史都铺出来（曾经一次冒 76 张）。
-        /// 30 分钟足够覆盖"刚跑完还没来得及看"的场景；
-        /// 更早的会话用户早就看过了，没必要再提醒。
-        /// </summary>
-        private const int CompletedShowMinutes = 30;
-
         /// <summary>用户主动叉掉的会话，永久不再提示（直到它再次开始运行）。</summary>
         private static HashSet<string> _dismissed = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// sessionId -> 桌宠**亲眼见过它处于运行中**。
+        ///
+        /// 这是"任务完成卡片"的唯一合法来源：
+        /// 只有桌宠自己看着某个会话从 running 变成 completed，才出一张卡。
+        ///
+        /// 之前用"完成时间在 30 分钟内"作为判据，结果刚启动就冒出 5 张 ——
+        /// 那 30 分钟里在 DSH 里跑过的会话全被算进来了，桌宠根本没见过它们跑。
+        /// 现在这个集合持久化保存，重启后依然知道哪些是自己跟踪过的。
+        /// </summary>
+        private static HashSet<string> _seenRunning = new HashSet<string>(StringComparer.Ordinal);
 
         private static bool _loaded;
 
@@ -183,6 +186,12 @@ namespace HajimiPet
                         _seenTurn[m.Groups[1].Value] = turn;
                     }
                 }
+                // "桌宠见过它在跑"的标记
+                foreach (Match m in Regex.Matches(json,
+                    "\"id\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"ran\"\\s*:\\s*true"))
+                {
+                    _seenRunning.Add(m.Groups[1].Value);
+                }
             }
             catch
             {
@@ -200,6 +209,10 @@ namespace HajimiPet
                 {
                     if (!ids.Contains(id)) ids.Add(id);
                 }
+                foreach (string id in _seenRunning)
+                {
+                    if (!ids.Contains(id)) ids.Add(id);
+                }
 
                 bool first = true;
                 foreach (string id in ids)
@@ -209,10 +222,13 @@ namespace HajimiPet
 
                     DateTime when = _seen.ContainsKey(id) ? _seen[id] : DateTime.UtcNow;
                     int turn = _seenTurn.ContainsKey(id) ? _seenTurn[id] : 0;
+                    bool ran = _seenRunning.Contains(id);
 
                     sb.Append("{\"id\":\"").Append(Escape(id))
                       .Append("\",\"seen\":\"").Append(when.ToString("o"))
-                      .Append("\",\"turn\":").Append(turn).Append('}');
+                      .Append("\",\"turn\":").Append(turn)
+                      .Append(",\"ran\":").Append(ran ? "true" : "false")
+                      .Append('}');
                 }
                 sb.Append("]}");
                 Directory.CreateDirectory(Path.GetDirectoryName(SeenFile));
@@ -288,6 +304,14 @@ namespace HajimiPet
                         _dismissed.Remove(id);
                         item.Unread = false;
                         item.ShowCompleted = false;   // 运行中走 Active 分支
+
+                        // **亲眼见过它在跑**：这是唯一能产生"完成卡片"的资格。
+                        // 记进集合并持久化，重启后依然认账。
+                        if (!_seenRunning.Contains(id))
+                        {
+                            _seenRunning.Add(id);
+                            Save();
+                        }
                     }
                     else if (_dismissed.Contains(id))
                     {
@@ -305,17 +329,13 @@ namespace HajimiPet
                                           (DateTime.Now - item.FileMtime).TotalSeconds
                                               <= FileTouchWindowSeconds;
 
-                        // 只保留"本次运行期间刚完成"的卡片。
+                        // 出卡片的**唯一条件**：桌宠亲眼看着它从 running 变成 completed。
                         //
-                        // 用户重启桌宠后一度看到角标 76 —— 因为所有历史已完成的
-                        // 会话都不在 _dismissed 里，全被当成"未关闭"拉进列表。
-                        // 卡片的本意是"刚才那个任务跑完了，告诉你一声"，
-                        // 不是把整个会话历史铺开。
-                        //
-                        // 判据：完成时间距今不超过 CompletedShowMinutes。
-                        bool recentlyFinished = item.Updated != DateTime.MinValue &&
-                                                (DateTime.Now - item.Updated).TotalMinutes
-                                                    <= CompletedShowMinutes;
+                        // 之前用"完成时间在 30 分钟内"，结果一启动就冒出 5 张：
+                        // 那段时间里在 DSH 跑过的会话全被算进来，桌宠从没见过它们跑。
+                        // 现在只认 _seenRunning 里的会话 —— 也就是桌宠自己跟踪过、
+                        // 看着它跑完的。用户重启桌宠后不会凭空冒出卡片。
+                        bool watched = _seenRunning.Contains(id);
 
                         if (justOpened)
                         {
@@ -324,14 +344,15 @@ namespace HajimiPet
                             Save();
                             item.ShowCompleted = false;
                         }
-                        else if (recentlyFinished)
+                        else if (watched)
                         {
-                            // 刚完成的：卡片**继续保留**，等用户主动关闭
+                            // 桌宠亲眼看着它跑完的：卡片**保留**，等用户主动关闭
                             item.ShowCompleted = true;
                         }
                         else
                         {
-                            // 早就完成的历史会话：不显示，也不占 _dismissed
+                            // 桌宠没见过它在跑（比如启动前就已经跑完的历史会话）：
+                            // 不显示，也不占 _dismissed
                             item.ShowCompleted = false;
                         }
                         // 未读判定优先用「轮次序号」——会话内嵌、单调递增，最可靠。
