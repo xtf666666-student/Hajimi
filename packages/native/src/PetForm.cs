@@ -109,6 +109,16 @@ namespace HajimiPet
         private int _badgePulse;
 
         /// <summary>
+        /// 当前鼠标悬停在哪个按钮上（-1 = 无）。
+        /// 用"卡片序号 + 按钮种类"标识，因为按钮矩形每帧都会重算。
+        /// 悬停时按钮底色加深、图标变深，给用户即时反馈 ——
+        /// 否则点下去没有视觉变化，会以为程序卡住。
+        /// </summary>
+        private int _hoverRow = -1;
+        private IconKind _hoverKind = IconKind.Reply;
+        private bool _hoverAnyBtn;
+
+        /// <summary>
         /// 上一帧实际使用的卡片动作按钮直径。
         /// 指示器（脚底小圆点/收起箭头）读它来保持同样大小；
         /// 列表还没画过时用 BtnSize 兜底。
@@ -1917,20 +1927,25 @@ namespace HajimiPet
         /// "直径 - 9" 算，几乎撑满整个圆 —— 看起来又笨又重。
         /// 现在图标固定占直径的 44%，四周留足空隙。
         /// </summary>
-        private static void DrawIconButton(Graphics g, Rectangle r, IconKind kind, bool enabled)
+        private static void DrawIconButton(Graphics g, Rectangle r, IconKind kind, bool enabled,
+            bool hover)
         {
             SmoothingMode prev = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             int alpha = enabled ? 255 : 110;
 
-            // 圆底：用桌宠自己的奶油/暖棕系（不照搬参考图的灰色），
+            // 圆底：悬停时明显加深，给出"可以点"的即时反馈。
+            // 用桌宠自己的奶油/暖棕系（不照搬参考图的灰色），
             // 但保留参考图的"浅底 + 极淡描边"轻重关系。
-            using (SolidBrush bg = new SolidBrush(Color.FromArgb(enabled ? 250 : 236, 243, 236, 224)))
+            Color bgNormal = Color.FromArgb(enabled ? 250 : 236, 243, 236, 224);
+            Color bgHover = Color.FromArgb(enabled ? 255 : 236, 232, 220, 200);
+            using (SolidBrush bg = new SolidBrush(hover && enabled ? bgHover : bgNormal))
             {
                 g.FillEllipse(bg, r);
             }
-            using (Pen border = new Pen(Color.FromArgb(enabled ? 70 : 40, 222, 208, 188), 1f))
+            using (Pen border = new Pen(Color.FromArgb(
+                hover && enabled ? 150 : (enabled ? 70 : 40), 214, 194, 168), 1f))
             {
                 g.DrawEllipse(border, r);
             }
@@ -1940,8 +1955,11 @@ namespace HajimiPet
             int cx = r.X + r.Width / 2;
             int cy = r.Y + r.Height / 2;
 
-            // 图标用深暖棕，比底色深但不像纯黑那么硬
-            Color ink = Color.FromArgb(alpha, 118, 96, 72);
+            // 图标用深暖棕；悬停时再深一档
+            Color ink = Color.FromArgb(alpha,
+                hover && enabled ? 96 : 118,
+                hover && enabled ? 74 : 96,
+                hover && enabled ? 52 : 72);
 
             switch (kind)
             {
@@ -2124,7 +2142,8 @@ namespace HajimiPet
             // 它是"关闭"这种次要操作，不该和回复/停止一样占满卡片高度。
             const int closeD = 16;
             _btnClose[index] = new Rectangle(card.X + 8, card.Y - 5, closeD, closeD);
-            DrawIconButton(g, _btnClose[index], IconKind.Close, true);
+            DrawIconButton(g, _btnClose[index], IconKind.Close, true,
+                IsHovered(index, IconKind.Close));
 
             // ---- 右侧两个动作（圆形，直径与内容同高）----
             int btnY = card.Y + (card.Height - btnD) / 2;
@@ -2132,8 +2151,10 @@ namespace HajimiPet
             int replyX = stopX - 8 - btnD;
             _btnStop[index] = new Rectangle(stopX, btnY, btnD, btnD);
             _btnReply[index] = new Rectangle(replyX, btnY, btnD, btnD);
-            DrawIconButton(g, _btnReply[index], IconKind.Reply, true);
-            DrawIconButton(g, _btnStop[index], IconKind.Stop, item.Active);
+            DrawIconButton(g, _btnReply[index], IconKind.Reply, true,
+                IsHovered(index, IconKind.Reply));
+            DrawIconButton(g, _btnStop[index], IconKind.Stop, item.Active,
+                IsHovered(index, IconKind.Stop));
 
             // ---- 第一行：状态点 + 标题 + 相对时间 ----
             float contentTop = card.Y + (card.Height - contentH) / 2f;
@@ -2193,6 +2214,51 @@ namespace HajimiPet
             {
                 g.DrawString(Ellipsize(g, status, timeFont, textRight - textLeft),
                     timeFont, st, textLeft, contentTop + titleH + lineGap);
+            }
+        }
+
+        /// <summary>
+        /// 当前绘制的按钮是否处于悬停状态。
+        /// 由 UpdateHoverButton 每帧（鼠标移动时）算好，绘制时直接读。
+        /// </summary>
+        private bool IsHovered(int row, IconKind kind)
+        {
+            return _hoverAnyBtn && _hoverRow == row && _hoverKind == kind;
+        }
+
+        /// <summary>
+        /// 根据鼠标位置更新"悬停的按钮"。
+        /// 按钮矩形每帧都会重算（卡片位置/直径都可能变），
+        /// 所以这里直接用这一帧的矩形做命中，和绘制用的是同一份数据。
+        /// </summary>
+        private void UpdateHoverButton(Point p)
+        {
+            _hoverAnyBtn = false;
+            _hoverRow = -1;
+
+            if (!_listOpen && _reveal <= 0.002f) return;
+            if (_rowRects == null || _rowRects.Length == 0) return;
+            if (_btnReply == null || _btnReply.Length == 0) return;
+
+            for (int i = 0; i < _rowRects.Length; i++)
+            {
+                if (i >= _btnReply.Length) break;
+
+                if (_btnClose.Length > i && _btnClose[i].Contains(p))
+                {
+                    _hoverAnyBtn = true; _hoverRow = i; _hoverKind = IconKind.Close;
+                    return;
+                }
+                if (_btnStop.Length > i && _btnStop[i].Contains(p))
+                {
+                    _hoverAnyBtn = true; _hoverRow = i; _hoverKind = IconKind.Stop;
+                    return;
+                }
+                if (_btnReply[i].Contains(p))
+                {
+                    _hoverAnyBtn = true; _hoverRow = i; _hoverKind = IconKind.Reply;
+                    return;
+                }
             }
         }
 
@@ -2297,6 +2363,11 @@ namespace HajimiPet
                 return;
             }
 
+            // 悬停到卡片按钮时给它加深反馈（否则点下去没有视觉变化，
+            // 用户会以为程序卡住）。
+            // 用这一帧的按钮矩形做命中，和绘制共用同一份数据。
+            UpdateHoverButton(e.Location);
+
             // 倾斜幅度按**猫身范围**归一化，不能用窗口尺寸。
             // 窗口为了装任务框会变得很大（512x570），若用窗口宽高归一化，
             // 鼠标在猫身上移动时 nx/ny 几乎不变，倾斜效果形同消失；
@@ -2319,6 +2390,9 @@ namespace HajimiPet
             _hover = false;
             _tiltX = 0f;
             _tiltY = 0f;
+            // 离开窗口时清掉按钮悬停，避免按钮停在"加深"状态
+            _hoverAnyBtn = false;
+            _hoverRow = -1;
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -2958,6 +3032,130 @@ namespace HajimiPet
         /// 自检：收起的整段淡出过程中，卡片底边必须一直贴着猫头顶，
         /// 不能一路下沉到盖住猫才消失。
         /// </summary>
+        /// <summary>
+        /// 自检：鼠标悬停到卡片按钮时，按钮必须变深（有可见反馈）。
+        /// 否则用户点下去看不到变化，会以为程序卡了。
+        /// </summary>
+        public string RunHoverProbe(int rows)
+        {
+            DebugActiveOverride = rows;
+            ForceHover = false;
+            _morph = 1f;
+            _reveal = 1f;
+            _revealVel = 0f;
+            _listOpen = true;
+            _listExpanded = true;
+            _listSpaceAllocated = true;
+            _listHeightHold = false;
+            _dragging = false;
+            _catAnchorValid = false;
+            Poll();
+            ApplyLayout();
+
+            _stack.SetRows(Math.Min(rows, StackLayout.MaxCards));
+            _stack.SnapSpread(1f);
+
+            var sb = new System.Text.StringBuilder();
+            bool ok = true;
+
+            // 先把列表画一遍，拿到按钮矩形
+            RenderListOnly(out _lastListRect);
+
+            if (_btnReply.Length == 0 || _btnStop.Length == 0)
+            {
+                return "找不到按钮矩形";
+            }
+
+            // 采样点：按钮圆心
+            Func<Rectangle, Point> center = r =>
+                new Point(r.X + r.Width / 2, r.Y + r.Height / 2);
+
+            // ---- 未悬停时的底色 ----
+            _hoverAnyBtn = false;
+            _hoverRow = -1;
+
+            // ---- 悬停到回复按钮 ----
+            _hoverAnyBtn = true;
+            _hoverRow = 0;
+            _hoverKind = IconKind.Reply;
+
+            // 分别渲染并比较按钮圆心的像素亮度
+            int[] normal = SampleButtons(null);
+            int[] hoverReply = SampleButtons(IconKind.Reply);
+            int[] hoverStop = SampleButtons(IconKind.Stop);
+
+            sb.Append("回复按钮 圆心亮度: 常态=").Append(normal[0])
+              .Append(" 悬停=").Append(hoverReply[0]).Append('\n');
+            sb.Append("停止按钮 圆心亮度: 常态=").Append(normal[1])
+              .Append(" 悬停=").Append(hoverStop[1]).Append('\n');
+
+            // 悬停时底色变深 -> 亮度下降
+            if (hoverReply[0] >= normal[0]) ok = false;
+            if (hoverStop[1] >= normal[1]) ok = false;
+
+            _hoverAnyBtn = false;
+            _hoverRow = -1;
+            _listOpen = false;
+            _reveal = 0f;
+            _revealVel = 0f;
+
+            return sb.ToString() + (ok ? "PASS" : "FAIL")
+                + " 悬停按钮时底色变深";
+        }
+
+        /// <summary>只渲染列表并返回按钮圆心亮度（Index 0=回复, 1=停止）。</summary>
+        private int[] SampleButtons(IconKind? hoverKind)
+        {
+            if (hoverKind.HasValue)
+            {
+                _hoverAnyBtn = true;
+                _hoverRow = 0;
+                _hoverKind = hoverKind.Value;
+            }
+            else
+            {
+                _hoverAnyBtn = false;
+                _hoverRow = -1;
+            }
+
+            int w = Math.Max(1, Width);
+            int h = Math.Max(1, Height);
+            using (Bitmap b = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, w, h);
+                var result = new int[2];
+                Rectangle[] rects = { _btnReply[0], _btnStop[0] };
+                // 采样点：按钮圆心的**左上方**，贴近边缘但仍在圆内，
+                // 这样避开了中间的图标（图标占直径的 44%），量到的是圆底本身。
+                for (int k = 0; k < 2; k++)
+                {
+                    Rectangle r = rects[k];
+                    Point c = new Point(r.X + (int)(r.Width * 0.22f),
+                                        r.Y + (int)(r.Height * 0.22f));
+                    if (c.X < 0 || c.Y < 0 || c.X >= w || c.Y >= h)
+                    {
+                        result[k] = -1;
+                        continue;
+                    }
+                    Color px = b.GetPixel(c.X, c.Y);
+                    result[k] = (px.R + px.G + px.B) / 3;
+                }
+                return result;
+            }
+        }
+
+        /// <summary>占位：渲染列表以填充按钮矩形。</summary>
+        private void RenderListOnly(out Rectangle unused)
+        {
+            unused = Rectangle.Empty;
+            int w = Math.Max(1, Width);
+            int h = Math.Max(1, Height);
+            using (Bitmap b = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                DrawScene(b, w, h);
+            }
+        }
+
         public string RunFadeProbe(int rows)
         {
             DebugActiveOverride = rows;

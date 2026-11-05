@@ -87,6 +87,13 @@ namespace HajimiPet
             }
 
 
+            // 悬停反馈自检：按钮悬停时底色变深
+            if (Array.IndexOf(args, "--hover-selftest") >= 0)
+            {
+                Console.Out.Write("[hover]\n" + _pet.RunHoverProbe(3));
+                return;
+            }
+
             // 淡出自检：收起过程中卡片不下沉
             if (Array.IndexOf(args, "--fade-selftest") >= 0)
             {
