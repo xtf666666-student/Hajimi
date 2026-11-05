@@ -119,6 +119,18 @@ namespace HajimiPet
         private bool _hoverAnyBtn;
 
         /// <summary>
+        /// 鼠标当前悬停在**哪张卡片**上（-1 = 没有）。
+        /// 对应 CSS 的 :hover —— × 只在鼠标进入该卡片时才显示。
+        /// </summary>
+        private int _hoverCardRow = -1;
+
+        /// <summary>
+        /// 每张卡片的 × 淡入进度 [0,1]，用于 transition: opacity 0.2s 的等效过渡。
+        /// 按行号索引，和 _active 的卡片一一对应。
+        /// </summary>
+        private float[] _closeFade = new float[0];
+
+        /// <summary>
         /// 上一帧实际使用的卡片动作按钮直径。
         /// 指示器（脚底小圆点/收起箭头）读它来保持同样大小；
         /// 列表还没画过时用 BtnSize 兜底。
@@ -209,13 +221,17 @@ namespace HajimiPet
         private void SnapListOffset()
         {
             _snapOffsetOnly = true;
-            // 导图要展示"默认摆放"：任务框在猫头顶正上方居中。
-            // 所以猫也回到窗口居中（_hugT = 0.5），这样左右对称，看不出偏向。
 
             _listOffX = 0f;
             _listOffXVel = 0f;
             _listOffYVel = 0f;
             _listOffY = -ListBottomGap;
+
+            // 导图时把 × 的淡入状态设成满（模拟"鼠标悬停在卡片上"），
+            // 否则导出的图里 × 全是隐藏的，看不出布局对不对。
+            int count = Math.Min(_active.Count, StackLayout.MaxCards);
+            _closeFade = new float[count];
+            for (int i = 0; i < count; i++) _closeFade[i] = 1f;
         }
 
         /// <summary>回到实时模式，恢复屏幕适配。</summary>
@@ -1365,6 +1381,7 @@ namespace HajimiPet
             StepMorph(dt);
             StepReveal(dt);
             StepListOffset(dt);
+            StepCloseFade(dt);
 
             // 列表需要占窗口高度时，只在"需要 / 不需要"翻转的那一帧改尺寸，
             // 动画过程中窗口保持不动，避免每帧重建窗口表面导致掉帧。
@@ -1927,6 +1944,44 @@ namespace HajimiPet
         /// "直径 - 9" 算，几乎撑满整个圆 —— 看起来又笨又重。
         /// 现在图标固定占直径的 44%，四周留足空隙。
         /// </summary>
+        /// <summary>
+        /// 绘制卡片的 × 关闭按钮 —— **裸图标，没有实心圆底**。
+        ///
+        /// 对应 CSS 里的那条规则：去掉外围实心圆，只保留干净的 x。
+        /// 透明度由 fade 控制（0=完全隐藏，1=显示），用来做悬停淡入淡出；
+        /// 命中判定仍走 _btnClose 的矩形，即使透明也能点到，
+        /// 但矩形只在淡入到一定程度后才参与命中（见 UpdateHoverButton）。
+        /// </summary>
+        private static void DrawCloseBare(Graphics g, Rectangle r, float fade, bool hover)
+        {
+            if (fade <= 0.02f) return;
+
+            SmoothingMode prev = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            int a = (int)Math.Round(255 * Clamp01(fade));
+
+            // 极细的圆圈边框（不是实心底），悬停时稍明显
+            using (Pen ring = new Pen(Color.FromArgb(
+                (int)(a * (hover ? 0.85f : 0.55f)), 186, 168, 146), 1f))
+            {
+                g.DrawEllipse(ring, r);
+            }
+
+            // 干净的 x
+            using (Pen fg = new Pen(Color.FromArgb(
+                (int)(a * (hover ? 1f : 0.8f)), 120, 102, 82), 1.4f))
+            {
+                fg.StartCap = LineCap.Round;
+                fg.EndCap = LineCap.Round;
+                int pad = Math.Max(3, r.Width / 4);
+                g.DrawLine(fg, r.X + pad, r.Y + pad, r.Right - pad, r.Bottom - pad);
+                g.DrawLine(fg, r.Right - pad, r.Y + pad, r.X + pad, r.Bottom - pad);
+            }
+
+            g.SmoothingMode = prev;
+        }
+
         private static void DrawIconButton(Graphics g, Rectangle r, IconKind kind, bool enabled,
             bool hover)
         {
@@ -2145,12 +2200,13 @@ namespace HajimiPet
             _actionBtnD = btnD;   // 供指示器对齐用
 
             // ---- 左上角 × ----
-            // 完全挪到卡片**外侧上方**（不再半浮进卡片内容区），
-            // 这样无论标题多长都不会被它压住。
+            // 对齐卡片**正左上角**（压在圆角上），不带实心圆底。
+            // 默认隐藏，鼠标悬停到本卡片时才淡入 —— 见 StepCloseFade。
             const int closeD = 15;
-            _btnClose[index] = new Rectangle(card.X + 6, card.Y - closeD - 2, closeD, closeD);
-            DrawIconButton(g, _btnClose[index], IconKind.Close, true,
-                IsHovered(index, IconKind.Close));
+            _btnClose[index] = new Rectangle(card.X - 2, card.Y - 6, closeD, closeD);
+            float closeFade = (index < _closeFade.Length) ? _closeFade[index] : 0f;
+            DrawCloseBare(g, _btnClose[index], closeFade,
+                _hoverCardRow == index && !_hoverAnyBtn);
 
             // ---- 右侧动作按钮 ----
             // 运行中：回复 + 停止；已完成：只保留回复。
@@ -2176,16 +2232,16 @@ namespace HajimiPet
             float contentTop = card.Y + (card.Height - contentH) / 2f;
             if (contentTop < card.Y + 3f) contentTop = card.Y + 3f;
 
-            // 左侧要让开左上角的 × （占 card.X+8 .. card.X+24）。
-            // 之前运行中只留 12px，× 直接压在标题上（用户截图的问题）。
-            // 已完成时还要再让开 14px 的绿勾。
-            int textLeft = card.X + (item.Active ? 28 : 30);
+            // × 现在压在卡片正左上角外侧（card.X-2 .. card.X+13），
+            // 不再侵入内容区，所以左边距可以贴边。
+            // 只有已完成的卡需要多留 18px 给绿勾（勾在 card.X+6）。
+            int textLeft = card.X + (item.Active ? 12 : 24);
             int textRight = _btnReply[index].X - 8;
 
-            // 绿色圆底 + 白色对勾（仅已完成）
+            // 绿色圆底 + 白色对勾（仅已完成），靠左贴边
             if (!item.Active)
             {
-                var mark = new Rectangle(card.X + 12,
+                var mark = new Rectangle(card.X + 6,
                     (int)Math.Round(contentTop + titleH / 2f) - 7, 14, 14);
                 using (SolidBrush bg2 = new SolidBrush(Color.FromArgb(alpha, 76, 176, 116)))
                 {
@@ -2286,6 +2342,43 @@ namespace HajimiPet
             return s.Substring(0, n);
         }
         /// <summary>
+        /// 推进每张卡片 × 按钮的淡入淡出。
+        ///
+        /// 等效 CSS 的 `transition: opacity 0.2s ease`：
+        ///   - 鼠标在本卡片上 -> 目标 1
+        ///   - 否则            -> 目标 0
+        /// 用固定速率的线性插值（0.2 秒走完全程），比弹簧更贴近 CSS 的 ease。
+        /// </summary>
+        private void StepCloseFade(float dt)
+        {
+            int count = Math.Min(_active.Count, StackLayout.MaxCards);
+            if (_closeFade.Length != count)
+            {
+                // 行数变化时重建数组，已有的进度保留
+                var next = new float[count];
+                for (int i = 0; i < count && i < _closeFade.Length; i++)
+                {
+                    next[i] = _closeFade[i];
+                }
+                _closeFade = next;
+            }
+
+            float step = dt / 0.2f;   // 0.2 秒走完 0 -> 1
+            for (int i = 0; i < count; i++)
+            {
+                float target = (_hoverCardRow == i) ? 1f : 0f;
+                if (Math.Abs(_closeFade[i] - target) <= step)
+                {
+                    _closeFade[i] = target;
+                }
+                else
+                {
+                    _closeFade[i] += (_closeFade[i] < target) ? step : -step;
+                }
+            }
+        }
+
+        /// <summary>
         /// 当前绘制的按钮是否处于悬停状态。
         /// 由 UpdateHoverButton 每帧（鼠标移动时）算好，绘制时直接读。
         /// </summary>
@@ -2303,6 +2396,7 @@ namespace HajimiPet
         {
             _hoverAnyBtn = false;
             _hoverRow = -1;
+            _hoverCardRow = -1;
 
             if (!_listOpen && _reveal <= 0.002f) return;
             if (_rowRects == null || _rowRects.Length == 0) return;
@@ -2312,12 +2406,22 @@ namespace HajimiPet
             {
                 if (i >= _btnReply.Length) break;
 
+                // 先判"鼠标是否在本卡片上"—— × 的显示由它决定（等效 :hover）。
+                // 用卡片矩形判定，比逐个按钮判定更接近 CSS 的行为。
+                if (_rowRects[i].Contains(p))
+                {
+                    _hoverCardRow = i;
+                }
+
+                // × 现在压在卡片正左上角外侧，命中区要算进去
                 if (_btnClose.Length > i && _btnClose[i].Contains(p))
                 {
                     _hoverAnyBtn = true; _hoverRow = i; _hoverKind = IconKind.Close;
+                    _hoverCardRow = i;      // 点 × 时也保持它可见
                     return;
                 }
-                if (_btnStop.Length > i && _btnStop[i].Contains(p))
+                if (_btnStop.Length > i && _btnStop[i] != Rectangle.Empty &&
+                    _btnStop[i].Contains(p))
                 {
                     _hoverAnyBtn = true; _hoverRow = i; _hoverKind = IconKind.Stop;
                     return;
