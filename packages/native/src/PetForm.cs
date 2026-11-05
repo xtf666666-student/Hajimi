@@ -1909,55 +1909,74 @@ namespace HajimiPet
         }
 
         /// <summary>会话行右侧的小图标按钮：↩ 回复 / ■ 停止。</summary>
+        /// <summary>
+        /// 卡片上的圆形小按钮（回复 / 停止 / 关闭）。
+        ///
+        /// 视觉参照：淡灰圆底 + **无描边** + 小巧的深灰线条图标。
+        /// 之前底色偏暖、描边偏重（棕色 1px 完整圆），图标又按
+        /// "直径 - 9" 算，几乎撑满整个圆 —— 看起来又笨又重。
+        /// 现在图标固定占直径的 44%，四周留足空隙。
+        /// </summary>
         private static void DrawIconButton(Graphics g, Rectangle r, IconKind kind, bool enabled)
         {
             SmoothingMode prev = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             int alpha = enabled ? 255 : 110;
-            using (SolidBrush bg = new SolidBrush(Color.FromArgb(enabled ? 246 : 236, 241, 233, 220)))
-            using (Pen border = new Pen(Color.FromArgb(enabled ? 190 : 110, 222, 205, 182), 1f))
+
+            // 圆底：用桌宠自己的奶油/暖棕系（不照搬参考图的灰色），
+            // 但保留参考图的"浅底 + 极淡描边"轻重关系。
+            using (SolidBrush bg = new SolidBrush(Color.FromArgb(enabled ? 250 : 236, 243, 236, 224)))
             {
                 g.FillEllipse(bg, r);
+            }
+            using (Pen border = new Pen(Color.FromArgb(enabled ? 70 : 40, 222, 208, 188), 1f))
+            {
                 g.DrawEllipse(border, r);
             }
+
+            // 图标尺寸：直径的 44%，居中
+            int icon = Math.Max(8, (int)Math.Round(r.Width * 0.44f));
+            int cx = r.X + r.Width / 2;
+            int cy = r.Y + r.Height / 2;
+
+            // 图标用深暖棕，比底色深但不像纯黑那么硬
+            Color ink = Color.FromArgb(alpha, 118, 96, 72);
 
             switch (kind)
             {
                 case IconKind.Stop:
                     {
-                        int s = Math.Max(5, r.Width - 9);
-                        int x = r.X + (r.Width - s) / 2;
-                        int y = r.Y + (r.Height - s) / 2;
-                        using (SolidBrush fg = new SolidBrush(Color.FromArgb(alpha, 205, 90, 74)))
+                        // 停止保留暖红：比纯灰更贴合桌宠配色，也更像"停止"。
+                        // 但尺寸收到和线条图标一致，不再是撑满圆的大方块。
+                        using (SolidBrush fg = new SolidBrush(
+                            Color.FromArgb(alpha, 196, 106, 88)))
                         {
-                            g.FillRectangle(fg, new Rectangle(x, y, s, s));
+                            g.FillRectangle(fg, new Rectangle(cx - icon / 2, cy - icon / 2, icon, icon));
                         }
                         break;
                     }
                 case IconKind.Close:
                     {
-                        using (Pen fg = new Pen(Color.FromArgb(alpha, 150, 132, 112), 1.4f))
+                        using (Pen fg = new Pen(ink, 1.3f))
                         {
-                            int pad = 5;
-                            g.DrawLine(fg, r.X + pad, r.Y + pad, r.Right - pad, r.Bottom - pad);
-                            g.DrawLine(fg, r.Right - pad, r.Y + pad, r.X + pad, r.Bottom - pad);
+                            int h = icon / 2;
+                            g.DrawLine(fg, cx - h, cy - h, cx + h, cy + h);
+                            g.DrawLine(fg, cx + h, cy - h, cx - h, cy + h);
                         }
                         break;
                     }
                 default:
                     {
-                        // 折返箭头 = 回复
-                        using (Pen fg = new Pen(Color.FromArgb(alpha, 90, 130, 100), 1.4f))
+                        // 折返箭头 = 回复：一横 + 左箭头 + 右端上折
+                        using (Pen fg = new Pen(ink, 1.3f))
                         {
-                            int left = r.X + 4;
-                            int right = r.Right - 4;
-                            int midY = r.Y + r.Height / 2 + 1;
-                            int topY = r.Y + 5;
-                            g.DrawLine(fg, right, midY, left, midY);
-                            g.DrawLine(fg, left, midY, left + 3, midY - 3);
-                            g.DrawLine(fg, left, midY, left + 3, midY + 3);
-                            g.DrawLine(fg, right, midY, right, topY);
+                            int w2 = icon / 2;
+                            int y = cy + 1;
+                            g.DrawLine(fg, cx + w2, y, cx - w2, y);
+                            g.DrawLine(fg, cx - w2, y, cx - w2 + 4, y - 4);
+                            g.DrawLine(fg, cx - w2, y, cx - w2 + 4, y + 4);
+                            g.DrawLine(fg, cx + w2, y, cx + w2, y - icon / 2);
                         }
                         break;
                     }
