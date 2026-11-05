@@ -2169,31 +2169,21 @@ namespace HajimiPet
             DrawIconButton(g, _btnReply[index], IconKind.Reply, true,
                 IsHovered(index, IconKind.Reply));
 
-            // ---- 第一行：勾选标记 + 标题 · 内容 ----
+            // ---- 第一行：标记 + 标题 · 内容 ----
             float contentTop = card.Y + (card.Height - contentH) / 2f;
             if (contentTop < card.Y + 4f) contentTop = card.Y + 4f;
 
-            int textLeft = card.X + 30;
+            // 已完成时左侧有 14px 的对勾圆，正文要让开；运行中没有标记，
+            // 正文直接贴到卡片左边距（用户要求运行中不要绿点）。
+            int textLeft = card.X + (item.Active ? 14 : 22);
             int textRight = _btnReply[index].X - 8;
 
-            // 已完成：绿色圆底 + 白色对勾，替代原来的状态点
-            int dotX = card.X + 14;
-            int dotY = (int)Math.Round(contentTop + titleH / 2f) - 5;
-            if (item.Active)
+            int markX = card.X + 14;
+            int markY = (int)Math.Round(contentTop + titleH / 2f) - 5;
+            if (!item.Active)
             {
-                using (SolidBrush halo = new SolidBrush(Color.FromArgb(alpha / 3, 59, 165, 95)))
-                {
-                    g.FillEllipse(halo, dotX - 3, dotY - 3, 14, 14);
-                }
-                using (SolidBrush dot = new SolidBrush(Color.FromArgb(alpha, 59, 165, 95)))
-                {
-                    g.FillEllipse(dot, dotX, dotY, 8, 8);
-                }
-            }
-            else
-            {
-                // 实心绿圆 + 白色对勾
-                var mark = new Rectangle(dotX - 1, dotY - 1, 14, 14);
+                // 已完成：实心绿圆 + 白色对勾
+                var mark = new Rectangle(markX - 1, markY - 1, 14, 14);
                 using (SolidBrush bg2 = new SolidBrush(Color.FromArgb(alpha, 76, 176, 116)))
                 {
                     g.FillEllipse(bg2, mark);
