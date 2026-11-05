@@ -107,6 +107,13 @@ namespace HajimiPet
         /// </summary>
         private bool _bubbleLaidOut;
         private int _badgePulse;
+
+        /// <summary>
+        /// 上一帧实际使用的卡片动作按钮直径。
+        /// 指示器（脚底小圆点/收起箭头）读它来保持同样大小；
+        /// 列表还没画过时用 BtnSize 兜底。
+        /// </summary>
+        private int _actionBtnD;
         private int _lastNotified;
 
         private bool _listOpen;
@@ -128,7 +135,19 @@ namespace HajimiPet
         private enum IconKind { Reply, Stop, Close }
 
         // 会话行右侧的图标按钮尺寸
-        private const int BtnSize = 15;
+        // 卡片右侧动作按钮的**基准直径**。
+        // 实际直径由"左侧两行文字的实测高度"决定（见 DrawStackCard），
+        // 这里是夹取上下限时的常量；指示器（小圆点/收起箭头）也用同一套上下限，
+        // 保证两处视觉大小一致。
+        private const int BtnSize = 26;
+        private const int BtnMinD = 18;
+        private const int BtnMaxD = 40;
+
+        /// <summary>
+        /// 卡片动作按钮的直径 —— 与左侧两行内容同高（用户要求）。
+        /// 指示器也用这个值，保证"脚底那颗圆点/箭头"和卡片按钮一样大。
+        /// </summary>
+        private int ActionBtnDiameter { get { return BtnSize; } }
 
         // 卡片堆叠布局（iPhone 通知那种）
         private readonly StackLayout _stack = new StackLayout();
@@ -1037,7 +1056,10 @@ namespace HajimiPet
         }
 
         // 脚底下方指示器占位：三种形态都用同一个槽位高度，切换时不跳
-        private const int IndicatorSlotH = 24;
+        // 脚底下方指示器占位：三种形态都用同一个槽位高度，切换时不跳。
+        // 要放得下 IndicatorDiameter() 的实际值（约 26px）+ 呼吸，
+        // 否则圆点会被窗口底边裁掉。
+        private const int IndicatorSlotH = 32;
 
         // 侧边气泡：挂在猫的右侧，不与上方会话列表重叠
         private const int BubbleWidth = 132;
@@ -1569,8 +1591,9 @@ namespace HajimiPet
                 if (_listOpen)
                 {
                     // ---- 收起箭头：一个白色小圆，里面一个向上的折角 ----
+                    // 直径与卡片右侧动作按钮一致（用户要求对齐）
                     _indicatorKind = IndicatorKind.Chevron;
-                    int d = 16;
+                    int d = IndicatorDiameter();
                     _badgeRect = new Rectangle(cx - d / 2, bandTop + 2, d, d);
 
                     using (SolidBrush bg = new SolidBrush(Color.FromArgb(252, 251, 247)))
@@ -1585,8 +1608,9 @@ namespace HajimiPet
                         chev.EndCap = LineCap.Round;
                         int mx = _badgeRect.X + _badgeRect.Width / 2;
                         int my = _badgeRect.Y + _badgeRect.Height / 2 + 1;
-                        g.DrawLine(chev, mx - 4, my + 2, mx, my - 2);
-                        g.DrawLine(chev, mx, my - 2, mx + 4, my + 2);
+                        int arm = Math.Max(3, d / 4);
+                        g.DrawLine(chev, mx - arm, my + 2, mx, my - 2);
+                        g.DrawLine(chev, mx, my - 2, mx + arm, my + 2);
                     }
                     return;
                 }
@@ -1599,7 +1623,8 @@ namespace HajimiPet
                 if (lineW < 26) lineW = 26;
                 if (lineW > 44) lineW = 44;
                 const int lineH = 5;
-                const int dotD = 22;
+                // 圆点直径与卡片动作按钮一致（用户要求对齐）
+                int dotD = IndicatorDiameter();
 
                 float baseT = Clamp01(_morph);
                 // 允许 >1 的那部分用来体现回弹：形状会先稍稍胀大再落回
@@ -1730,6 +1755,18 @@ namespace HajimiPet
 
         private enum IndicatorKind { None, Line, Dot, Chevron }
         private IndicatorKind _indicatorKind = IndicatorKind.None;
+
+        /// <summary>
+        /// 脚底指示器（小圆点 / 收起箭头）的直径。
+        /// 与卡片右侧的回复/停止按钮保持一致，两者视觉上才是一套。
+        /// </summary>
+        private int IndicatorDiameter()
+        {
+            int d = _actionBtnD > 0 ? _actionBtnD : BtnSize;
+            if (d < BtnMinD) d = BtnMinD;
+            if (d > BtnMaxD) d = BtnMaxD;
+            return d;
+        }
 
         // ---------------- 列表图层（用于整层淡入淡出） ----------------
 
@@ -2043,30 +2080,43 @@ namespace HajimiPet
                 g.DrawPath(border, path);
             }
 
-            // ---- 左上角 × ----
-            // 半浮在卡片左上边缘外，和附件一致
-            int closeSize = BtnSize;
-            _btnClose[index] = new Rectangle(card.X + 8, card.Y - 5, closeSize, closeSize);
-            DrawIconButton(g, _btnClose[index], IconKind.Close, true);
-
-            // ---- 右侧两个动作 ----
-            int btnY = card.Y + (card.Height - BtnSize) / 2;
-            int stopX = card.Right - 12 - BtnSize;
-            int replyX = stopX - 8 - BtnSize;
-            _btnStop[index] = new Rectangle(stopX, btnY, BtnSize, BtnSize);
-            _btnReply[index] = new Rectangle(replyX, btnY, BtnSize, BtnSize);
-            DrawIconButton(g, _btnReply[index], IconKind.Reply, true);
-            DrawIconButton(g, _btnStop[index], IconKind.Stop, item.Active);
-
-            // ---- 第一行：状态点 + 标题 + 相对时间 ----
-            // 文字块按**实测字高**上下居中，而不是写死 Y+7 / Y+28。
-            // 写死的时候两行挤在卡片上半部，底下空一大截，看着很不协调。
+            // ---- 先量出左侧两行文字的实际高度 ----
+            // 右侧按钮的**直径**就取这个值：用户要求"按钮高度和左侧内容一样高，
+            // 宽度自适应成圆"。所以必须先在画按钮之前算出来。
             string status = string.IsNullOrEmpty(item.Status) ? "已结束" : item.Status;
 
             float titleH = g.MeasureString(item.Title, font).Height;
             float statusH = g.MeasureString(status, timeFont).Height;
             const float lineGap = 1f;
             float contentH = titleH + lineGap + statusH;
+
+            // 圆形按钮直径 = 内容高度（用户要求"高度和左侧内容一样高"）。
+            // GDI+ 的 MeasureString 会带上行间距，实测比视觉字高大不少，
+            // 所以再按卡片高度的 55% 收一次，避免按钮把整张卡撑满。
+            int btnD = (int)Math.Round(contentH);
+            if (btnD < BtnMinD) btnD = BtnMinD;
+            if (btnD > BtnMaxD) btnD = BtnMaxD;
+            int capD = (int)(card.Height * 0.55f);
+            if (btnD > capD) btnD = capD;
+            _actionBtnD = btnD;   // 供指示器对齐用
+
+            // ---- 左上角 × ----
+            // 半浮在卡片左上边缘外，用固定的小尺寸（16px）：
+            // 它是"关闭"这种次要操作，不该和回复/停止一样占满卡片高度。
+            const int closeD = 16;
+            _btnClose[index] = new Rectangle(card.X + 8, card.Y - 5, closeD, closeD);
+            DrawIconButton(g, _btnClose[index], IconKind.Close, true);
+
+            // ---- 右侧两个动作（圆形，直径与内容同高）----
+            int btnY = card.Y + (card.Height - btnD) / 2;
+            int stopX = card.Right - 12 - btnD;
+            int replyX = stopX - 8 - btnD;
+            _btnStop[index] = new Rectangle(stopX, btnY, btnD, btnD);
+            _btnReply[index] = new Rectangle(replyX, btnY, btnD, btnD);
+            DrawIconButton(g, _btnReply[index], IconKind.Reply, true);
+            DrawIconButton(g, _btnStop[index], IconKind.Stop, item.Active);
+
+            // ---- 第一行：状态点 + 标题 + 相对时间 ----
             float contentTop = card.Y + (card.Height - contentH) / 2f;
             if (contentTop < card.Y + 4f) contentTop = card.Y + 4f;
 
