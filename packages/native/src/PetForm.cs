@@ -748,8 +748,25 @@ namespace HajimiPet
         /// <summary>桌宠离屏幕边缘至少留这么多像素，拖不过去。</summary>
         private const int EdgeMargin = 2;
 
-        /// <summary>任务框离屏幕边缘至少留这么多像素，不够就自动让位。</summary>
-        private const int ListEdgeMargin = 8;
+        /// <summary>
+        /// 任务框**开始让位**的触发距离（相对屏幕边缘）。
+        ///
+        /// 这是"提前量"：不等卡片真的贴到屏幕边才动，而是离边还有这么远
+        /// 就开始向反方向平移 / 向上翻转。
+        ///
+        /// 取 28px —— 约卡片高度的 1/2、卡宽的 1/9：
+        ///   - 太小（8px）会显得"贴边才反应"
+        ///   - 太大（56px）窗口要放得下更远的横移，会撑到 608px 宽，
+        ///     透明区挡鼠标，得不偿失
+        /// 28px 比原来提前了约 3 倍，视觉上明显是"还没碰边就让开了"。
+        /// </summary>
+        private const int ListEdgeMargin = 28;
+
+        /// <summary>
+        /// 任务框让位后，仍需与屏幕边缘保持的最小间距。
+        /// 和触发距离分开，这样"提前开始动"和"动到哪儿停下"是两回事。
+        /// </summary>
+        private const int ListMinGap = 8;
 
         // ---- 任务框相对桌宠的摆放（贴边时自动四向适配） ----
         // _listOffX: 卡片摞中心相对"猫头顶中心"的横向偏移（屏幕像素）
@@ -858,6 +875,7 @@ namespace HajimiPet
             int listMaxH = listH > 0 ? StackLayout.ExpandedHeight(rows) : 0;
 
             // 卡片可能横移的最大距离（相对窗口中心）
+            // 让位时卡片中心最远能偏到 ±(CardW/2 + ListEdgeMargin)，见 UpdateListTarget
             int shiftMax = StackLayout.CardW / 2 + ListEdgeMargin;
             // 窗口半宽必须 >= shiftMax + CardW/2，即整窗 >= CardW + 2*shiftMax
             int needW = StackLayout.CardW + shiftMax * 2;
@@ -3381,7 +3399,14 @@ namespace HajimiPet
                 offY = clampedTop + fullH - catTop;
             }
 
-            // ---- 横向：以猫中心为基准，越界就整体平移 ----
+            // ---- 横向：以猫中心为基准，提前让位 ----
+            //
+            // 卡片中心的可活动区间：
+            //   左边界 = 屏幕左边 + 触发距离 + 半个卡宽
+            //   右边界 = 屏幕右边 - 触发距离 - 半个卡宽
+            // 触发距离用 ListEdgeMargin（56px），意味着当猫中心进入
+            // "离屏幕边 56px + 半卡宽" 的范围时，卡片就开始往反方向挪，
+            // 而不是等到真的贴边才动。
             int halfW = StackLayout.CardW / 2 + ListTopPad;
             int minCx = work.Left + ListEdgeMargin + halfW;
             int maxCx = work.Right - ListEdgeMargin - halfW;
