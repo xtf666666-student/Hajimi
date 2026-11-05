@@ -136,6 +136,15 @@ namespace HajimiPet
         /// </summary>
         private const int FileTouchWindowSeconds = 60;
 
+        /// <summary>
+        /// 已完成的会话，完成时间在这么多分钟内才显示卡片。
+        ///
+        /// 用途：桌宠重启时不要把整个会话历史都铺出来（曾经一次冒 76 张）。
+        /// 30 分钟足够覆盖"刚跑完还没来得及看"的场景；
+        /// 更早的会话用户早就看过了，没必要再提醒。
+        /// </summary>
+        private const int CompletedShowMinutes = 30;
+
         /// <summary>用户主动叉掉的会话，永久不再提示（直到它再次开始运行）。</summary>
         private static HashSet<string> _dismissed = new HashSet<string>(StringComparer.Ordinal);
 
@@ -292,12 +301,22 @@ namespace HajimiPet
                         //
                         // DSH 打开会话时会刷新它的缓存文件，所以"已完成 + 文件刚被写过"
                         // 就等价于"用户已经进去看过了"。这时把卡片关掉。
-                        //
-                        // 注意窗口要够短（60 秒）：太长会把正常的缓存整理误判成"打开"，
-                        // 太短则用户刚点进去、桌宠还没轮询就错过了。
                         bool justOpened = item.FileMtime != DateTime.MinValue &&
                                           (DateTime.Now - item.FileMtime).TotalSeconds
                                               <= FileTouchWindowSeconds;
+
+                        // 只保留"本次运行期间刚完成"的卡片。
+                        //
+                        // 用户重启桌宠后一度看到角标 76 —— 因为所有历史已完成的
+                        // 会话都不在 _dismissed 里，全被当成"未关闭"拉进列表。
+                        // 卡片的本意是"刚才那个任务跑完了，告诉你一声"，
+                        // 不是把整个会话历史铺开。
+                        //
+                        // 判据：完成时间距今不超过 CompletedShowMinutes。
+                        bool recentlyFinished = item.Updated != DateTime.MinValue &&
+                                                (DateTime.Now - item.Updated).TotalMinutes
+                                                    <= CompletedShowMinutes;
+
                         if (justOpened)
                         {
                             _dismissed.Add(id);
@@ -305,10 +324,15 @@ namespace HajimiPet
                             Save();
                             item.ShowCompleted = false;
                         }
+                        else if (recentlyFinished)
+                        {
+                            // 刚完成的：卡片**继续保留**，等用户主动关闭
+                            item.ShowCompleted = true;
+                        }
                         else
                         {
-                            // 未被关闭的已完成会话：卡片**继续保留**（用户要求不自动消失）
-                            item.ShowCompleted = true;
+                            // 早就完成的历史会话：不显示，也不占 _dismissed
+                            item.ShowCompleted = false;
                         }
                         // 未读判定优先用「轮次序号」——会话内嵌、单调递增，最可靠。
                         // 旧记录里没有 turn（只有 seen 时间戳），此时退回时间比较，
