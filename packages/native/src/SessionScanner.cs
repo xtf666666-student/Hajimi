@@ -12,6 +12,14 @@ namespace HajimiPet
         public string Title;
         /// <summary>卡片第二行：当前在做什么（"正在执行命令 / 正在生成回复 / 等你确认"）。</summary>
         public string Status;
+        /// <summary>
+        /// 卡片正文要展示的一段文字。
+        ///
+        /// 已完成的会话：模型输出的最终结果（turnOutline 末轮的 response）；
+        /// 运行中的会话：缓存里没有流式内容，退回上一轮结果的摘要，
+        /// 都没有就留空（卡片只显示标题）。
+        /// </summary>
+        public string Body;
         /// <summary>这一轮是否还在跑。</summary>
         public bool Active;
         /// <summary>刚跑完、还没被用户看过。注意：这不再影响角标显示。</summary>
@@ -22,7 +30,8 @@ namespace HajimiPet
 
         public override string ToString()
         {
-            return (Active ? "* " : (Unread ? "+ " : "  ")) + Title + " [" + Status + "] (" + Ago + ")";
+            return (Active ? "* " : (Unread ? "+ " : "  ")) + Title
+                 + " [" + Status + "] " + Body + " (" + Ago + ")";
         }
     }
 
@@ -357,6 +366,7 @@ namespace HajimiPet
                 bool active = marked && IsFresh(file, text);
 
                 string status = ReadStatus(text, active);
+                string body = ReadBody(text, active);
 
                 // 完成时间必须用会话文件里内嵌的时间戳，不能用文件 mtime。
                 // mtime 会被 DSH 自己的缓存整理、迁移、甚至读取刷新，
@@ -384,6 +394,7 @@ namespace HajimiPet
                     Id = Path.GetFileNameWithoutExtension(file),
                     Title = Decode(title),
                     Status = status,
+                    Body = body,
                     Active = active,
                     Unread = false,
                     Turn = turn,
@@ -406,6 +417,111 @@ namespace HajimiPet
         ///   inbox                     —— 排队等你的输入（approval / 回答）
         /// 用这几条推出一个人能看懂的状态，不猜具体工具名。
         /// </summary>
+        /// <summary>
+        /// 取卡片要显示的正文。
+        ///
+        /// 数据来源是 turnOutline 里最后一轮的 response —— 那是模型这一轮的
+        /// 输出正文。缓存里**没有**流式（打字机）内容，所以运行中也只能
+        /// 拿上一轮的完整结果，或者干脆留空。
+        ///
+        /// 清理：去掉 Markdown 标记、代码块、换行，压成一行，好让卡片
+        /// 单行截断时语义还连贯。
+        /// </summary>
+        private static string ReadBody(string text, bool active)
+        {
+            string resp = ReadLastResponse(text);
+            if (string.IsNullOrEmpty(resp)) return string.Empty;
+
+            return FlattenText(resp);
+        }
+
+        /// <summary>
+        /// 从 turnOutline 里取最后一个非空的 response。
+        /// turnOutline 是 {"turns":[{"turn":N,"prompt":"...","response":"..."}]}，
+        /// 直接找 '"response":"' 出现的位置，比解析整棵对象快得多，
+        /// 而且不怕缓存文件尾部被截断。
+        /// </summary>
+        private static string ReadLastResponse(string text)
+        {
+            string last = null;
+            int from = 0;
+            while (true)
+            {
+                Match m = ResponseRe.Match(text, from);
+                if (!m.Success) break;
+                string raw = m.Groups[1].Value;
+                if (raw.Length > 0) last = raw;
+                from = m.Index + m.Length;
+                if (from >= text.Length) break;
+            }
+            return last == null ? null : Decode(last);
+        }
+
+        /// <summary>
+        /// 把多行 Markdown 正文压成一行给卡片用。
+        /// 去掉 ``` 代码块、** 加粗标记、行首 #/- 等，换行变空格，压缩多余空白。
+        /// </summary>
+        private static string FlattenText(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+
+            var sb = new StringBuilder(s.Length);
+            int i = 0;
+            while (i < s.Length)
+            {
+                // 跳过整个 ``` ... ``` 代码块
+                if (s.Length - i >= 3 && s[i] == '`' && s[i + 1] == '`' && s[i + 2] == '`')
+                {
+                    int close = s.IndexOf("```", i + 3, StringComparison.Ordinal);
+                    i = close < 0 ? s.Length : close + 3;
+                    sb.Append(' ');
+                    continue;
+                }
+                char c = s[i];
+                if (c == '*' && i + 1 < s.Length && s[i + 1] == '*')
+                {
+                    i += 2;          // 去掉 ** 加粗标记
+                    continue;
+                }
+                if (c == '`' || c == '#')
+                {
+                    i++;             // 去掉单个反引号和 # 标题符
+                    continue;
+                }
+                if (c == '\r' || c == '\n' || c == '\t')
+                {
+                    sb.Append(' ');
+                    i++;
+                    continue;
+                }
+                sb.Append(c);
+                i++;
+            }
+
+            // 压缩连续空白
+            string flat = sb.ToString();
+            var outSb = new StringBuilder(flat.Length);
+            bool space = false;
+            foreach (char c in flat)
+            {
+                if (c == ' ')
+                {
+                    if (!space) outSb.Append(' ');
+                    space = true;
+                }
+                else
+                {
+                    outSb.Append(c);
+                    space = false;
+                }
+            }
+            return outSb.ToString().Trim();
+        }
+
+        private static readonly Regex ResponseRe = new Regex(
+            "\"response\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"",
+            RegexOptions.Compiled);
+
         private static string ReadStatus(string text, bool active)
         {
             if (!active) return "已结束";

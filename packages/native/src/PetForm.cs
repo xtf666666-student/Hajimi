@@ -2117,10 +2117,13 @@ namespace HajimiPet
                 g.DrawPath(border, path);
             }
 
-            // ---- 先量出左侧两行文字的实际高度 ----
-            // 右侧按钮的**直径**就取这个值：用户要求"按钮高度和左侧内容一样高，
-            // 宽度自适应成圆"。所以必须先在画按钮之前算出来。
+            // ---- 布局：两行（标题 · 内容 / 状态） ----
+            //
+            // 用户要求：标题 + " · " + 内容，标题加粗，内容从第一个字符开始，
+            // 单行放不下就用 ... 截断；且**标题优先**，内容只能吃剩余空间，
+            // 否则内容一变长标题就被挤没了。
             string status = string.IsNullOrEmpty(item.Status) ? "已结束" : item.Status;
+            string body = item.Body ?? string.Empty;
 
             float titleH = g.MeasureString(item.Title, font).Height;
             float statusH = g.MeasureString(status, timeFont).Height;
@@ -2145,75 +2148,126 @@ namespace HajimiPet
             DrawIconButton(g, _btnClose[index], IconKind.Close, true,
                 IsHovered(index, IconKind.Close));
 
-            // ---- 右侧两个动作（圆形，直径与内容同高）----
+            // ---- 右侧动作按钮 ----
+            // 运行中：回复 + 停止；已完成：只保留回复（用户要求隐藏停止）。
             int btnY = card.Y + (card.Height - btnD) / 2;
             int stopX = card.Right - 12 - btnD;
             int replyX = stopX - 8 - btnD;
-            _btnStop[index] = new Rectangle(stopX, btnY, btnD, btnD);
-            _btnReply[index] = new Rectangle(replyX, btnY, btnD, btnD);
+            if (item.Active)
+            {
+                _btnStop[index] = new Rectangle(stopX, btnY, btnD, btnD);
+                _btnReply[index] = new Rectangle(replyX, btnY, btnD, btnD);
+                DrawIconButton(g, _btnStop[index], IconKind.Stop, true,
+                    IsHovered(index, IconKind.Stop));
+            }
+            else
+            {
+                // 没有停止按钮时，回复按钮右移占住它的位置
+                _btnStop[index] = Rectangle.Empty;
+                _btnReply[index] = new Rectangle(stopX, btnY, btnD, btnD);
+            }
             DrawIconButton(g, _btnReply[index], IconKind.Reply, true,
                 IsHovered(index, IconKind.Reply));
-            DrawIconButton(g, _btnStop[index], IconKind.Stop, item.Active,
-                IsHovered(index, IconKind.Stop));
 
-            // ---- 第一行：状态点 + 标题 + 相对时间 ----
+            // ---- 第一行：勾选标记 + 标题 · 内容 ----
             float contentTop = card.Y + (card.Height - contentH) / 2f;
             if (contentTop < card.Y + 4f) contentTop = card.Y + 4f;
 
             int textLeft = card.X + 30;
-            int textRight = replyX - 8;
+            int textRight = _btnReply[index].X - 8;
 
-            int titleMax = Math.Max(50, textRight - textLeft);
-            string title = Ellipsize(g, item.Title, font, titleMax);
-
-            // 状态点与标题首行垂直居中对齐
+            // 已完成：绿色圆底 + 白色对勾，替代原来的状态点
             int dotX = card.X + 14;
-            int dotY = (int)Math.Round(contentTop + titleH / 2f) - 4;
-
-            // 状态点：在跑 = 绿点带光晕；否则空心灰环
+            int dotY = (int)Math.Round(contentTop + titleH / 2f) - 5;
             if (item.Active)
             {
                 using (SolidBrush halo = new SolidBrush(Color.FromArgb(alpha / 3, 59, 165, 95)))
                 {
-                    g.FillEllipse(halo, dotX - 3, dotY - 3, 13, 13);
+                    g.FillEllipse(halo, dotX - 3, dotY - 3, 14, 14);
                 }
                 using (SolidBrush dot = new SolidBrush(Color.FromArgb(alpha, 59, 165, 95)))
                 {
-                    g.FillEllipse(dot, dotX, dotY, 7, 7);
+                    g.FillEllipse(dot, dotX, dotY, 8, 8);
                 }
             }
             else
             {
-                using (Pen ring = new Pen(Color.FromArgb(alpha, 186, 170, 152), 1.3f))
+                // 实心绿圆 + 白色对勾
+                var mark = new Rectangle(dotX - 1, dotY - 1, 14, 14);
+                using (SolidBrush bg2 = new SolidBrush(Color.FromArgb(alpha, 76, 176, 116)))
                 {
-                    g.DrawEllipse(ring, dotX, dotY, 6, 6);
+                    g.FillEllipse(bg2, mark);
+                }
+                using (Pen tick = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1.4f))
+                {
+                    tick.StartCap = LineCap.Round;
+                    tick.EndCap = LineCap.Round;
+                    int cx = mark.X + mark.Width / 2;
+                    int cy = mark.Y + mark.Height / 2;
+                    g.DrawLine(tick, cx - 4, cy, cx - 1, cy + 3);
+                    g.DrawLine(tick, cx - 1, cy + 3, cx + 4, cy - 3);
                 }
             }
 
-            int titleMax2 = Math.Max(50, textRight - textLeft);
-            using (SolidBrush ink = new SolidBrush(Color.FromArgb(alpha, 52, 40, 30)))
+            // 标题优先：先量标题，内容只吃剩下的宽度。
+            // 这样内容再长，标题也不会被挤出去（用户要的"最佳实践"）。
+            const string Sep = " · ";
+            float sepW = g.MeasureString(Sep, font).Width;
+            float avail = textRight - textLeft;
+
+            string titleShown = item.Title;
+            float titleW = g.MeasureString(titleShown, font).Width;
+            // 标题最多占 35%，把更多宽度让给内容。
+            // 内容才是用户想看的信息，标题通常短且可识别前几个字。
+            float titleCap = avail * 0.35f;
+            if (titleW > titleCap)
             {
-                g.DrawString(title, font, ink, textLeft, contentTop);
+                titleShown = Ellipsize(g, item.Title, font, (int)titleCap);
+                titleW = g.MeasureString(titleShown, font).Width;
             }
 
-            // 时间贴在标题右侧，与标题首行居中对齐
-            using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(alpha, 172, 152, 132)))
+            float bodyAvail = avail - titleW - sepW;
+            string bodyShown = string.Empty;
+            if (bodyAvail > 24 && !string.IsNullOrEmpty(body))
             {
-                float tw = g.MeasureString(title, font).Width;
-                int ax = textLeft + (int)tw + 8;
+                bodyShown = Ellipsize(g, body, timeFont, (int)bodyAvail);
+            }
+
+            using (SolidBrush ink = new SolidBrush(Color.FromArgb(alpha, 52, 40, 30)))
+            {
+                g.DrawString(titleShown, font, ink, textLeft, contentTop);
+            }
+            if (!string.IsNullOrEmpty(bodyShown))
+            {
+                using (SolidBrush sepBr = new SolidBrush(Color.FromArgb(alpha, 168, 152, 134)))
+                using (SolidBrush bodyBr = new SolidBrush(Color.FromArgb(alpha, 118, 100, 82)))
+                {
+                    float sx = textLeft + titleW;
+                    g.DrawString(Sep, font, sepBr,
+                        sx, contentTop);
+                    g.DrawString(bodyShown, timeFont, bodyBr,
+                        sx + sepW, contentTop + (titleH - statusH * 1.0f) / 2f + 2f);
+                }
+            }
+
+            // ---- 第二行：状态 + 相对时间 ----
+            using (SolidBrush st = new SolidBrush(Color.FromArgb(alpha, 150, 134, 116)))
+            {
+                string stText = Ellipsize(g, status, timeFont, (int)avail);
+                g.DrawString(stText, timeFont, st, textLeft, contentTop + titleH + lineGap);
+
+                float stW = g.MeasureString(stText, timeFont).Width;
+                int ax = textLeft + (int)stW + 8;
                 SizeF asz = g.MeasureString(item.Ago, metaFont);
                 if (ax + (int)asz.Width < textRight)
                 {
-                    g.DrawString(item.Ago, metaFont, agoBrush,
-                        ax, contentTop + (titleH - asz.Height) / 2f + 1f);
+                    using (SolidBrush agoBrush = new SolidBrush(Color.FromArgb(alpha, 172, 152, 132)))
+                    {
+                        g.DrawString(item.Ago, metaFont, agoBrush,
+                            ax, contentTop + titleH + lineGap
+                               + (statusH - asz.Height) / 2f);
+                    }
                 }
-            }
-
-            // ---- 第二行：状态说明（附件里 "正在调用 wait threads" 那行的位置）----
-            using (SolidBrush st = new SolidBrush(Color.FromArgb(alpha, 150, 134, 116)))
-            {
-                g.DrawString(Ellipsize(g, status, timeFont, textRight - textLeft),
-                    timeFont, st, textLeft, contentTop + titleH + lineGap);
             }
         }
 
