@@ -19,17 +19,18 @@ namespace HajimiPet
         // 卡片：第一行「标题 · 内容」（标题完整、内容截断），
         // 第二行是内容续行（最多两行）。
         //
-        // 宽度 360 -> 300：用户觉得太长，缩回来。
-        // 高度 58 -> 52：去掉了状态行，只留两行文字，卡不用那么高。
+        // 高度必须容得下两行文字 + 上下内边距：
+        //   标题 9.5Bold 约 17px + 间隙 2px + 正文 8pt 约 15px = 34px
+        //   上下各 9px 内边距 -> 52px 刚好贴边，一压边框就显得"没间隙"。
+        // 放到 60px，留出真正的呼吸空间。
         public const int CardW = 300;
-        public const int CardH = 52;
+        public const int CardH = 60;
         /// <summary>收起时每张只露出这么多，形成"一摞"。
         /// 16px 刚好露出下沿圆角，iPhone 通知堆叠就是这个观感。</summary>
         public const int PeekOffset = 16;
         /// <summary>展开时相邻卡片之间的缝隙。
-        /// 7px 太窄（卡片高 58，边框+投影占掉一部分，看着像紧挨着），
-        /// 12px 能让每张卡片的圆角和投影完整可见，层次清楚。</summary>
-        public const int Gap = 12;
+        /// 卡片高 60 时 12px 太紧（投影会贴到下张卡的边框），放到 14px。</summary>
+        public const int Gap = 14;
         public const int MaxCards = 6;
 
         private readonly List<float> _y = new List<float>();

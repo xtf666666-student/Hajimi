@@ -170,21 +170,13 @@ def main():
               j1['list'][3] < j3['list'][3],
               f"1 条={j1['list'][3]}px, 3 条={j3['list'][3]}px")
 
-        # 列表与猫之间不应有大片空白
-        la = np.array(lst)
-        lal = la[:, :, 3]
-        rows_c = [(y, int((lal[y] > 25).sum())) for y in range(la.shape[0])]
-        first = next((y for y, c in rows_c if c > 6), 0)
-        last = la.shape[0] - 1 - next((y for y, c in reversed(rows_c) if c > 6), 0)
-        gaps = run = 0
-        for y in range(first, last + 1):
-            if rows_c[y][1] <= 6:
-                run += 1
-            else:
-                if run > 10:
-                    gaps += 1
-                run = 0
-        check('列表与猫之间无大空隙', gaps == 0, f'空隙段={gaps}')
+        # 列表底边与猫头顶之间不应有大片空白
+        # 注意：不能扫描"整个列表高度里的空白段"——卡片之间本来就有
+        # Gap(14px) 的缝，那会被误判成空隙。只量列表底部到猫头顶的距离。
+        lx, ly, lw, lh = j3['list']
+        cx, cy, cw, ch = j3['cat']
+        gap_px = cy - (ly + lh)
+        check('列表与猫之间无大空隙', gap_px <= 12, f'间距={gap_px}px')
 
     # ---- 真实窗口样式 ----
     kill()

@@ -2205,12 +2205,12 @@ namespace HajimiPet
             _actionBtnD = btnD;   // 供指示器对齐用
 
             // ---- 左上角 × ----
-            // 必须完整落在**卡片矩形内**才点得到：窗口的鼠标命中基于
-            // ClientRectangle，超出窗口（或超出卡片可视区）的点会被系统丢弃。
-            // 之前放在 card.X-2, card.Y-6（卡片外面），所以点了没反应。
-            // 现在贴卡片左上角内侧，视觉上仍压着圆角。
-            const int closeD = 15;
-            _btnClose[index] = new Rectangle(card.X + 2, card.Y + 2, closeD, closeD);
+            // 位置：卡片正左上角，但要让开卡片本身的圆角（radius 13），
+            // 否则 × 的圆圈会被圆角切掉一半（之前的 bug）。
+            // 完全落在卡片内部 —— 窗口鼠标命中基于 ClientRectangle，
+            // 越界坐标会被丢弃，那样就点不到。
+            const int closeD = 16;
+            _btnClose[index] = new Rectangle(card.X + 4, card.Y + 4, closeD, closeD);
             float closeFade = (index < _closeFade.Length) ? _closeFade[index] : 0f;
             DrawCloseBare(g, _btnClose[index], closeFade,
                 _hoverCardRow == index && !_hoverAnyBtn);
@@ -2242,16 +2242,15 @@ namespace HajimiPet
             // × 现在压在卡片正左上角外侧（card.X-2 .. card.X+13），
             // 不再侵入内容区，所以左边距可以贴边。
             // 只有已完成的卡需要多留 18px 给绿勾（勾在 card.X+6）。
-            // × 占 card.X+2 .. card.X+17，文字必须让开它（不悬停时 × 是透明的，
-            // 但空间照留，避免悬停时文字跳动）。
-            // 已完成还要再让开 14px 的绿勾。
-            int textLeft = card.X + (item.Active ? 20 : 32);
+            // × 占 card.X .. card.X+16，文字必须让开它。
+            // 已完成还要再让开 14px 的绿勾（勾放在 × 右侧）。
+            int textLeft = card.X + (item.Active ? 22 : 36);
             int textRight = _btnReply[index].X - 8;
 
             // 绿色圆底 + 白色对勾（仅已完成），放在 × 右侧
             if (!item.Active)
             {
-                var mark = new Rectangle(card.X + 19,
+                var mark = new Rectangle(card.X + 21,
                     (int)Math.Round(contentTop + titleH / 2f) - 7, 14, 14);
                 using (SolidBrush bg2 = new SolidBrush(Color.FromArgb(alpha, 76, 176, 116)))
                 {
