@@ -849,12 +849,27 @@ namespace HajimiPet
 
         private int CatYInWindow(int listArea, int catH, int indicatorArea)
         {
-            // 猫头顶在窗口内的 y。上下预留对称（各 listArea），
-            // 所以猫落在窗口中部：
-            //   h = listArea*2 + catH + indicatorArea
-            //   catY = h - indicatorArea - catH - listArea  (= listArea)
-            int h = listArea * 2 + catH + indicatorArea;
-            return h - indicatorArea - catH - listArea;
+            // 猫头顶在窗口内的 y = 上方为任务框预留的高度。
+            // 窗口总高由 ApplyLayout 保证 >= listArea + catH + indicatorArea
+            // + 下方预留，所以这个返回值一定让猫完整落在窗口内。
+            return listArea;
+        }
+
+        /// <summary>
+        /// 窗口下方为任务框预留的高度（翻转到猫脚下方时用）。
+        /// ApplyLayout 和 UpdateListTarget 必须用同一个值。
+        /// </summary>
+        private int BelowAreaFor(int listArea, int catH, int indicatorArea)
+        {
+            int rows = Math.Min(_active.Count, StackLayout.MaxCards);
+            if (!_listOpen && _reveal <= 0.002f) return listArea;
+            if (rows <= 0) return listArea;
+
+            // 注意：调用方算总高时已经把 catH 加进去了，这里**不能再加 catH**。
+            // 只需要"指示器槽位 + 呼吸 + 整摞高度"。
+            int need = indicatorArea + ListBottomGap
+                     + StackLayout.ExpandedHeight(rows) + ListTopPad;
+            return Math.Max(listArea, need);
         }
 
         private void ApplyLayout()
@@ -893,7 +908,10 @@ namespace HajimiPet
             int listArea = ListAreaFor(_active.Count);
             int indicatorArea = _activeCount > 0 ? IndicatorSlotH : 0;
 
-            int h = listArea * 2 + catH + shadowH + indicatorArea;
+            // 下方预留要能容纳"翻转到猫脚下方"的整摞，见 BelowAreaFor
+            int belowArea = BelowAreaFor(listArea, catH, indicatorArea);
+
+            int h = listArea + catH + shadowH + indicatorArea + belowArea;
 
             // 关键：窗口尺寸变化时，保持**猫的屏幕位置**完全不变。
             //
@@ -2726,6 +2744,7 @@ namespace HajimiPet
                 ("贴右", work.Right + 5000, centerTop),
                 ("贴上", centerLeft, work.Top - 5000),
                 ("贴下", centerLeft, work.Bottom + 5000),
+                ("贴顶翻下", centerLeft, work.Top + 2),
             };
 
             foreach (var c in cases)
@@ -3378,7 +3397,12 @@ namespace HajimiPet
             int topIfAbove = catTop + (int)offAbove - fullH;
             bool fitsAbove = topIfAbove >= work.Top + ListEdgeMargin;
 
-            float offBelow = catH + ListBottomGap + fullH;
+            // 翻到下方时，卡片顶部必须让开脚底的**任务指示器**（收起箭头）。
+            // 原来只留了 ListBottomGap(4px)，卡片会直接盖住那颗箭头，
+            // 用户点不到收起按钮（截图里的问题）。
+            // 这里加上指示器槽位 + 一点呼吸，刚好让箭头完整露出。
+            int indicatorReserve = (_activeCount > 0 ? IndicatorSlotH : 0) + ListBottomGap;
+            float offBelow = catH + indicatorReserve + fullH;
             int topIfBelow = catTop + (int)offBelow - fullH;
             bool fitsBelow = topIfBelow + fullH <= work.Bottom - ListEdgeMargin;
             float offY;

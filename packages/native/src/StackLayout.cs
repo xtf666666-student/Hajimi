@@ -22,7 +22,10 @@ namespace HajimiPet
         /// <summary>收起时每张只露出这么多，形成"一摞"。
         /// 16px 刚好露出下沿圆角，iPhone 通知堆叠就是这个观感。</summary>
         public const int PeekOffset = 16;
-        public const int Gap = 7;
+        /// <summary>展开时相邻卡片之间的缝隙。
+        /// 7px 太窄（卡片高 58，边框+投影占掉一部分，看着像紧挨着），
+        /// 12px 能让每张卡片的圆角和投影完整可见，层次清楚。</summary>
+        public const int Gap = 12;
         public const int MaxCards = 6;
 
         private readonly List<float> _y = new List<float>();
